@@ -36,98 +36,65 @@ class Model(nn.Module):
             ],
             norm_layer=torch.nn.LayerNorm(configs.d_model)
         )
-        # Decoder
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            self.projection = nn.Linear(configs.d_model, configs.pred_len, bias=True)
-        if self.task_name == 'imputation':
-            self.projection = nn.Linear(configs.d_model, configs.seq_len, bias=True)
-        if self.task_name == 'anomaly_detection':
-            self.projection = nn.Linear(configs.d_model, configs.seq_len, bias=True)
-        if self.task_name == 'classification':
-            self.act = F.gelu
-            self.dropout = nn.Dropout(configs.dropout)
-            self.projection = nn.Linear(configs.d_model * configs.enc_in, configs.num_class)
 
-    def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+        self.te_scale = nn.Linear(1, 1)
+        self.te_periodic = nn.Linear(1, configs.d_model - 1)
+
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(configs.d_model * 2, configs.d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(configs.d_model, configs.d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(configs.d_model, 1)
+        )
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)
+        out1 = self.te_scale(tt)
+        out2 = torch.sin(self.te_periodic(tt))
+        return torch.cat([out1, out2], -1)
+
+    def forecasting(self, tp_to_predict, observed_data, observed_tp, observed_mask):
+        # tp_to_predict: 要预测的时刻 [B, L_Pred]
+        # observed_data: 观测值 [B, T, V]
+        # observed_mask: 掩码 [B, T, V] 一般不用
+        # observed_tp: 观测时刻 [B, T, 1]
+
+        # forcast改名为forcasting
+        # 参数名统一
+        # 去Time Series Library找原始输入格式 跟这里的参数对应
         # Normalization from Non-stationary Transformer
-        means = x_enc.mean(1, keepdim=True).detach()
-        x_enc = x_enc - means
+        #  [B T V]
+        means = observed_data.mean(1, keepdim=True).detach()
+        x_enc = observed_data - means
         stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
         x_enc /= stdev
 
         _, _, N = x_enc.shape
 
-        # Embedding
-        enc_out = self.enc_embedding(x_enc, x_mark_enc)
-        enc_out, attns = self.encoder(enc_out, attn_mask=None)
-
-        dec_out = self.projection(enc_out).permute(0, 2, 1)[:, :, :N]
-        # De-Normalization from Non-stationary Transformer
-        dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
-        dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
-        return dec_out
-
-    def imputation(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask):
-        # Normalization from Non-stationary Transformer
-        means = x_enc.mean(1, keepdim=True).detach()
-        x_enc = x_enc - means
-        stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
-        x_enc /= stdev
-
-        _, L, N = x_enc.shape
+        padding_len = self.seq_len - x_enc.shape[1]
+        padding = torch.zeros(size=[x_enc.shape[0], padding_len, x_enc.shape[2]]).to(observed_data.device)
+        x_enc = torch.cat([x_enc, padding], dim=1)
+        padding_t = torch.zeros(size=[x_enc.shape[0], padding_len]).to(observed_data.device)
+        observed_tp = torch.cat([observed_tp, padding_t], dim=1)
 
         # Embedding
-        enc_out = self.enc_embedding(x_enc, x_mark_enc)
+        enc_out = self.enc_embedding(x_enc, observed_tp.unsqueeze(-1))
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
+        enc_out = enc_out[:, :-1] # 保证Shape: [B， V， d_model维]
 
-        dec_out = self.projection(enc_out).permute(0, 2, 1)[:, :, :N]
-        # De-Normalization from Non-stationary Transformer
-        dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, L, 1))
-        dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, L, 1))
-        return dec_out
+        # 改Decoder
+        L_pred = tp_to_predict.shape[-1]
+        enc_out = enc_out.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
+        # print(h.shape, time_steps_to_predict.shape)
+        time_steps_to_predict = tp_to_predict.view(x_enc.shape[0], 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
+        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
 
-    def anomaly_detection(self, x_enc):
-        # Normalization from Non-stationary Transformer
-        means = x_enc.mean(1, keepdim=True).detach()
-        x_enc = x_enc - means
-        stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
-        x_enc /= stdev
+        enc_out = torch.cat([enc_out, te_pred], dim=-1)  # (B, N, Lp, F)
 
-        _, L, N = x_enc.shape
+        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
+        outputs = self.decoder(enc_out).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
 
-        # Embedding
-        enc_out = self.enc_embedding(x_enc, None)
-        enc_out, attns = self.encoder(enc_out, attn_mask=None)
+        return outputs
 
-        dec_out = self.projection(enc_out).permute(0, 2, 1)[:, :, :N]
-        # De-Normalization from Non-stationary Transformer
-        dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, L, 1))
-        dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, L, 1))
-        return dec_out
 
-    def classification(self, x_enc, x_mark_enc):
-        # Embedding
-        enc_out = self.enc_embedding(x_enc, None)
-        enc_out, attns = self.encoder(enc_out, attn_mask=None)
-
-        # Output
-        output = self.act(enc_out)  # the output transformer encoder/decoder embeddings don't include non-linearity
-        output = self.dropout(output)
-        output = output.reshape(output.shape[0], -1)  # (batch_size, c_in * d_model)
-        output = self.projection(output)  # (batch_size, num_classes)
-        return output
-
-    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
-            return dec_out[:, -self.pred_len:, :]  # [B, L, D]
-        if self.task_name == 'imputation':
-            dec_out = self.imputation(x_enc, x_mark_enc, x_dec, x_mark_dec, mask)
-            return dec_out  # [B, L, D]
-        if self.task_name == 'anomaly_detection':
-            dec_out = self.anomaly_detection(x_enc)
-            return dec_out  # [B, L, D]
-        if self.task_name == 'classification':
-            dec_out = self.classification(x_enc, x_mark_enc)
-            return dec_out  # [B, N]
-        return None

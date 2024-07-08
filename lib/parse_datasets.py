@@ -28,14 +28,13 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 	### PhysioNet dataset ### 
 	### MIMIC dataset ###
 	if dataset_name in ["physionet", "mimic"]:
-
+		args.pred_window = 48 - args.history
 		### list of tuples (record_id, tt, vals, mask) ###
 		if dataset_name == "physionet":
 			total_dataset = PhysioNet('../data/physionet', quantization = args.quantization,
 											download=True, n_samples = args.n, device = device)
 		elif dataset_name == "mimic":
 			total_dataset = MIMIC('../data/mimic/', n_samples = args.n, device = device)
-
 		# Shuffle and split
 		seen_data, test_data = model_selection.train_test_split(total_dataset, train_size= 0.8, random_state = 42, shuffle = True)
 		train_data, val_data = model_selection.train_test_split(seen_data, train_size= 0.75, random_state = 42, shuffle = False)
@@ -61,8 +60,11 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 			collate_fn = variable_time_collate_fn_CRU
 		elif(args.model == "latent_ode"):
 			collate_fn = variable_time_collate_fn_ODE
-		else:
+		elif(args.model == "iTransformer"):
+			# [B, T, V]
 			collate_fn = variable_time_collate_fn
+
+
 
 		train_dataloader = DataLoader(train_data, batch_size= batch_size, shuffle=True, 
 			collate_fn= lambda batch: collate_fn(batch, args, device, data_type = "train",
@@ -130,7 +132,7 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 			collate_fn = USHCN_variable_time_collate_fn_CRU
 		elif(args.model == "latent_ode"):
 			collate_fn = USHCN_variable_time_collate_fn_ODE
-		else:
+		elif(args.model == "iTransformer"):
 			collate_fn = USHCN_variable_time_collate_fn
 
 		train_data = USHCN_time_chunk(train_data, args, device)
@@ -174,9 +176,10 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 	##################################################################
 	### Activity dataset ###
 	elif dataset_name == "activity":
-		args.pred_window = 1000 # predict future 1000 ms
+		args.pred_window = 4000 - args.history # predict future 1000 ms
 
 		total_dataset = PersonActivity('../data/activity/', n_samples = args.n, download=True, device = device)
+
 
 		# Shuffle and split
 		seen_data, test_data = model_selection.train_test_split(total_dataset, train_size= 0.8, random_state = 42, shuffle = True)
@@ -203,13 +206,22 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 			collate_fn = variable_time_collate_fn_CRU
 		elif(args.model == "latent_ode"):
 			collate_fn = variable_time_collate_fn_ODE
-		else:
+		elif (args.model == "iTransformer") :
 			collate_fn = variable_time_collate_fn
 
 		train_data = Activity_time_chunk(train_data, args, device)
 		val_data = Activity_time_chunk(val_data, args, device)
 		test_data = Activity_time_chunk(test_data, args, device)
 		batch_size = args.batch_size
+
+		max_len = 0
+		for tup in train_data:
+			max_len = len(tup[1]) if (len(tup[1]) > max_len) else max_len
+		for tup in val_data:
+			max_len = len(tup[1]) if (len(tup[1]) > max_len) else max_len
+		for tup in test_data:
+			max_len = len(tup[1]) if (len(tup[1]) > max_len) else max_len
+
 		print("Dataset n_samples after time split:", len(train_data)+len(val_data)+len(test_data),\
 			len(train_data), len(val_data), len(test_data))
 		train_dataloader = DataLoader(train_data, batch_size= batch_size, shuffle=True, 

@@ -40,8 +40,9 @@ parser.add_argument('--dataset', type=str, default='activity', help="Dataset to 
 # value 0 means using original time granularity, Value 1 means quantization by 1 hour, 
 # value 0.1 means quantization by 0.1 hour = 6 min, value 0.016 means quantization by 0.016 hour = 1 min
 parser.add_argument('--quantization', type=float, default=0.0, help="Quantization on the physionet dataset.")
-parser.add_argument('--model', type=str, default='TimesNet', help="Model name")
+parser.add_argument('--model', type=str, default='iTransformer', help="[iTransformer, ...... ]")
 parser.add_argument('--outlayer', type=str, default='Linear', help="Model name")
+parser.add_argument('--patch_ts', type=bool, default=False)
 
 parser.add_argument('--hop', type=int, default=1, help="hops in GNN")
 parser.add_argument('--nhead', type=int, default=1, help="heads in Transformer")
@@ -113,7 +114,7 @@ if __name__ == '__main__':
 	# utils.makedirs("results/")
 
 	##################################################################
-	data_obj = parse_datasets(args, patch_ts=True)
+	data_obj = parse_datasets(args, patch_ts=args.patch_ts)
 	input_dim = data_obj["input_dim"]
 	
 	### Model setting ###
@@ -121,24 +122,48 @@ if __name__ == '__main__':
 	args.npatch = int(math.ceil((args.history - args.patch_size) / args.stride)) + 1
 	args.patch_layer = layer_of_patches(args.npatch)
 
+	if args.dataset == 'activity':
+		args.seq_len = 130
+	elif args.dataset == 'physionet':
+		args.seq_len = 216
+	elif args.dataset == 'physionet':
+		args.seq_len = 643
+	elif args.dataset == 'USHCN':
+		args.seq_len = 214
+
+
+	if args.model == 'iTransformer':
+		args.task_name = 'long_term_forecast'
+		args.pred_len =  720
+		args.output_attention = None
+		args.d_model = 512
+		args.embed = 'timeF'
+		args.freq = 'h'
+		args.dropout = 0.1
+		args.factor = 3
+		args.d_ff = 512
+		args.e_layers = 4
+		args.n_heads = 1
+		args.activation = 'gelu'
+
 	model_dict = {
-		'TimesNet': TimesNet.Model({  'seq_len': 96 ,
-							  'label_len': 48 ,
-							  'pred_len': 96 ,
-							  'e_layers': 2 ,
-							  'd_layers': 1 ,
-							  'factor': 3 ,
-							  'enc_in': 21 ,
-							  'dec_in': 21 ,
-							  'c_out': 21 ,
-							  'd_model': 32 ,
-							  'd_ff': 32 ,
-							  'top_k': 5 ,
-		}),
+		# 'TimesNet': TimesNet.Model({  'seq_len': 96 ,
+		# 					  'label_len': 48 ,
+		# 					  'pred_len': 96 ,
+		# 					  'e_layers': 2 ,
+		# 					  'd_layers': 1 ,
+		# 					  'factor': 3 ,
+		# 					  'enc_in': 21 ,
+		# 					  'dec_in': 21 ,
+		# 					  'c_out': 21 ,
+		# 					  'd_model': 32 ,
+		# 					  'd_ff': 32 ,
+		# 					  'top_k': 5 ,
+		# }),
 		'DLinear': DLinear,
 		'PatchTST': PatchTST,
 		'MICN': MICN,
-		'iTransformer': iTransformer,
+		'iTransformer': iTransformer.Model(args),
 		'MambaSimple': MambaSimple,
 		'TimeMixer': TimeMixer,
 		'Pathformer': Pathformer,

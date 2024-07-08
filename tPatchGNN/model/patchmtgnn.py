@@ -2929,6 +2929,7 @@ class BaselineHPG(nn.Module):
             Q = torch.matmul(avg_te, self.w_q)
             K = torch.matmul(time_te, self.w_k)
             V = torch.matmul(x, self.w_v)
+            # V = torch.matmul(x+avg_te, self.w_v)
             # V = x
 
 
@@ -2997,6 +2998,1027 @@ class BaselineHPG(nn.Module):
 
         return outputs  # (1, B, Lp, N)
 
+class BaselineHPG_v2(nn.Module):
+    def __init__(self, args, supports=None):
+        super(BaselineHPG_v2, self).__init__()
+        d_model = args.hid_dim
+        self.device = args.device
+        self.hid_dim = args.hid_dim
+        self.N = args.ndim
+        # self.M = args.npatch
+        self.batch_size = None
+        self.supports = supports
+        self.n_layer = args.nlayer
+        self.gcs = nn.ModuleList()
+        self.alpha = args.alpha
+        self.res = args.res
+        ### Intra-time series modeling ##
+        ## Time embedding
+        self.te_scale = nn.Linear(1, 1)
+        self.te_periodic = nn.Linear(1, args.hid_dim - 1)
+        self.patch_layer = args.patch_layer
+        self.obs_enc = nn.Linear(1, args.hid_dim)
+
+
+
+        nodevec_dim = args.node_dim
+        self.nodevec_dim = nodevec_dim
+
+        self.nodevec = nn.Parameter(torch.randn(self.N, d_model).cuda(), requires_grad=True)
+        self.relu = nn.ReLU()
+        # self.nodevec = nn.Parameter(torch.FloatTensor(self.N, d_model))
+        # nn.init.xavier_uniform_(self.nodevec)
+
+
+        ### Encoder output layer ###
+        # self.outlayer = args.outlayer
+        enc_dim = args.hid_dim
+
+        for l in range(self.n_layer):
+            # self.gcs.append(UA_GTrans(1, nodevec_dim + enc_dim + args.te_dim, nodevec_dim + enc_dim + args.te_dim, self.alpha))
+            self.gcs.append(BaselineGTrans(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
+
+        self.w_q = nn.Parameter(torch.FloatTensor(d_model, d_model))
+        self.w_k = nn.Parameter(torch.FloatTensor(d_model, d_model))
+        self.w_v = nn.Parameter(torch.FloatTensor(d_model, d_model))
+
+        nn.init.xavier_uniform_(self.w_q)
+        nn.init.xavier_uniform_(self.w_k)
+        nn.init.xavier_uniform_(self.w_v)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model, d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model, 1)
+        )
+
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)
+        out1 = self.te_scale(tt)
+        out2 = torch.sin(self.te_periodic(tt))
+        return torch.cat([out1, out2], -1)
+
+    def IMTS_Model(self, x, mask_X, x_time, x_uncertainty):
+        """
+        x (B, N, M, L, F)
+        mask_X (B, N, M, L, 1)
+        x_time (B, N, M, L, 1)
+        """
+        B, N, M, L, D = x.shape
+        layer_nums = int(math.log2(M)) + 1
+
+        # 创建一个形状为 [N] 的张量，包含变量下标
+        variable_indices = torch.arange(N).to(x.device)
+
+        # for i in range(layer_nums + 1):
+        B, N, M, L, D = x.shape
+
+        # 将其扩展成形状为 [1, N, 1, 1, 1]
+        cur_variable_indices = variable_indices.view(1, N, 1, 1, 1)
+
+        # 利用广播机制，将其扩展成形状为 [B, N, M, L, D]
+        cur_variable_indices = cur_variable_indices.expand(B, N, M, L, 1)
+        # 并行式
+        cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
+        cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
+        cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
+
+        # 生成图结构
+        cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
+        cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
+        int_max = torch.iinfo(torch.int32).max
+        element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
+
+        if element_count > int_max:
+            once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
+            sd = 0
+            ed = once_num
+            total_num = math.ceil(B / once_num)
+            for k in range(total_num):
+                if k == 0:
+                    edge_ind = torch.where(cur_adj[sd:ed] == 1)
+                    edge_ind_0 = edge_ind[0]
+                    edge_ind_1 = edge_ind[1]
+                    edge_ind_2 = edge_ind[2]
+                    edge_ind_3 = edge_ind[3]
+                elif k == total_num - 1:
+                    cur_edge_ind = torch.where(cur_adj[sd:] == 1)
+                    edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
+                    edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
+                    edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
+                    edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
+                    edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
+                else:
+                    cur_edge_ind = torch.where(cur_adj[sd:ed] == 1)
+                    edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
+                    edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
+                    edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
+                    edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
+                sd += once_num
+                ed += once_num
+
+        else:
+            edge_ind = torch.where(cur_adj == 1)
+
+        source_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[2])
+        target_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[3])
+        edge_index = torch.cat([source_nodes.unsqueeze(0), target_nodes.unsqueeze(0)])
+
+        edge_time = torch.squeeze(cur_x_time[source_nodes] - cur_x_time[target_nodes])
+
+        edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+        edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+        edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
+        edge_self = torch.where((edge_same_time_diff_var + edge_diff_time_same_var) == 2)
+        edge_same_time_diff_var[edge_self] = 0.0
+
+        # 图神经网络传播节点状态
+        for gc in self.gcs:
+            cur_x = gc(cur_x, edge_index, edge_time, cur_x_time, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, 0)
+        x = rearrange(cur_x, '(b m n l) c -> b n m l c', b=B, n=N, m=M, l=L)
+
+        # 池化聚合同一Patch 同一变量的隐藏状态
+        # 若Patch为奇数个，创建一个虚拟节点
+        if M > 1 and M % 2 != 0:
+            x = torch.cat([x, x[:, :, -1, :].unsqueeze(2)], dim=2)
+            mask_X = torch.cat([mask_X, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
+            x_time = torch.cat([x_time, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
+            M = M + 1
+
+        obs_num_per_patch = torch.sum(mask_X, dim=3)  # mask_X.shape[B, N, M, L, 1]
+        x_time_per_patch = torch.sum(x_time, dim=3)  # x_time.shape[B, N, M, L, 1]
+        avg_x_time = x_time_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
+                                                obs_num_per_patch)
+        avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
+        time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
+        Q = torch.matmul(avg_te, self.w_q)
+        K = torch.matmul(time_te, self.w_k)
+        V = torch.matmul(x, self.w_v)
+        attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
+        attention = torch.div(attention, Q.shape[-1] ** 0.5)
+        attention[torch.where(mask_X == 0)] = -1e10
+        scale_attention = torch.softmax(attention, dim=-2)
+        mask_X = (obs_num_per_patch > 0).float()
+        x = torch.sum((V * scale_attention), dim=-2)
+        x_time = avg_x_time
+
+        for n_layer in range(1, self.patch_layer):
+            B, N, T, D = x.shape
+
+            cur_x = x.reshape(-1, D)
+            cur_x_time = x_time.reshape(-1, 1)
+
+            cur_variable_indices = variable_indices.view(1, N, 1, 1)
+
+            # 利用广播机制，将其扩展成形状为 [B, N, M, L, D]
+            cur_variable_indices = cur_variable_indices.expand(B, N, T, 1).reshape(-1, 1)
+
+            patch_indices = torch.arange(T).float().to(x.device)
+
+            cur_patch_indices = patch_indices.view(1, 1, T)
+            missing_indices = torch.where(mask_X.reshape(B, -1) == 0)
+
+            cur_patch_indices = cur_patch_indices.expand(B, N, T).reshape(B, -1)
+
+            patch_indices_matrix_1 = cur_patch_indices.unsqueeze(1).expand(B, N * T, N * T)
+            patch_indices_matrix_2 = cur_patch_indices.unsqueeze(-1).expand(B, N * T, N * T)
+
+            patch_interval = patch_indices_matrix_1 - patch_indices_matrix_2
+            patch_interval[missing_indices[0], missing_indices[1]] = torch.zeros(len(missing_indices[0]), N * T).to(x.device)
+            patch_interval[missing_indices[0], :, missing_indices[1]] = torch.zeros(len(missing_indices[0]), N * T).to(x.device)
+            # cur_adj = patch_interval == 1 and patch_interval == -1
+            if len(patch_interval[0] > 0):
+                edge_ind = torch.where(torch.abs(patch_interval) == 1)
+
+                source_nodes = (N * T * edge_ind[0] + edge_ind[1])
+                target_nodes = (N * T * edge_ind[0] + edge_ind[2])
+                edge_index = torch.cat([source_nodes.unsqueeze(0), target_nodes.unsqueeze(0)])
+
+                edge_time = torch.squeeze(cur_x_time[source_nodes] - cur_x_time[target_nodes])
+
+                edge_diff_time_same_var = (
+                            (cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+                edge_same_time_diff_var = ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+                edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
+                edge_self = torch.where((edge_same_time_diff_var + edge_diff_time_same_var) == 2)
+                edge_same_time_diff_var[edge_self] = 0.0
+
+                # 图神经网络传播节点状态
+                for gc in self.gcs:
+                    cur_x = gc(cur_x, edge_index, edge_time, cur_x_time, edge_same_time_diff_var, edge_diff_time_same_var,
+                               edge_diff_time_diff_var, n_layer)
+                x = rearrange(cur_x, '(b n t) c -> b n t c', b=B, n=N, t=T, c=D)
+
+            # 池化聚合同一Patch 同一变量的隐藏状态
+            # 若Patch为奇数个，创建一个虚拟节点
+            if T > 1 and T % 2 != 0:
+                x = torch.cat([x, x[:, :, -1, :].unsqueeze(-2)], dim=2)
+                mask_X = torch.cat([mask_X, torch.zeros(size=[B, N, 1, 1]).to(x.device)], dim=2)
+                x_time = torch.cat([x_time, torch.zeros(size=[B, N, 1, 1]).to(x.device)], dim=2)
+                T = T + 1
+
+            x = x.view(B, N, T // 2, 2, D)
+            x_time = x_time.view(B, N, T // 2, 2, 1)
+            mask_X = mask_X.view(B, N, T // 2, 2, 1)
+
+            obs_num_per_patch = torch.sum(mask_X, dim=3)  # mask_X.shape[B, N, M, L, 1]
+            x_time_per_patch = torch.sum(x_time, dim=3)  # x_time.shape[B, N, M, L, 1]
+            avg_x_time = x_time_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
+                                                        obs_num_per_patch)
+            avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
+            time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
+            Q = torch.matmul(avg_te, self.w_q)
+            K = torch.matmul(time_te, self.w_k)
+            V = torch.matmul(x, self.w_v)
+            attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
+            attention = torch.div(attention, Q.shape[-1] ** 0.5)
+            attention[torch.where(mask_X == 0)] = -1e10
+            scale_attention = torch.softmax(attention, dim=-2)
+
+            mask_X = (obs_num_per_patch > 0).float()
+            x = torch.sum((V * scale_attention), dim=-2)
+            x_time = avg_x_time
+
+            # x = x.view(B, N, M // 2, 2, D)
+            # x_time = x_time.view(B, N, M // 2, 2, 1)
+            # mask_X = mask_X.view(B, N, M // 2, 2, 1)
+            # x_uncertainty = x_uncertainty.view(B, N, M // 2, 2)
+
+
+
+        return torch.squeeze(x)
+
+    def forecasting(self, time_steps_to_predict, X, truth_time_steps, mask=None):
+    # def forward(self, observed_tp, observed_data, observed_mask, tau, return_almat=False):
+        """
+        X (B, M, L, N)
+        truth_time_steps (B, M, L, N) [0, 1]
+        mask (B, M, L, N)
+
+        To ====>
+        X (B*N*M, L, 1)
+        truth_time_steps (B*N*M, L, 1)
+        mask_X (B*N*M, L, 1)
+        """
+
+        B, M, L_in, N = X.shape
+        self.batch_size = B
+        X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
+        X = self.obs_enc(X)
+        truth_time_steps = truth_time_steps.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
+        mask = mask.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
+        te_his = self.LearnableTE(truth_time_steps)  # (B, N, M, L, F_te)
+        # print(time.max(), time.mean(), time.min(), time.shape, te.shape)
+        var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
+        # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
+        X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
+        ### *** a encoder to model irregular time series
+        h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
+
+        """ Decoder """
+        L_pred = time_steps_to_predict.shape[-1]
+        h = h.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
+        # print(h.shape, time_steps_to_predict.shape)
+        time_steps_to_predict = time_steps_to_predict.view(B, 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
+        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
+
+        h = torch.cat([h, te_pred], dim=-1)  # (B, N, Lp, F)
+
+        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
+        outputs = self.decoder(h).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
+
+        return outputs  # (1, B, Lp, N)
+
+class BaselineHPG_v2_1Layer(nn.Module):
+    def __init__(self, args, supports=None):
+        super(BaselineHPG_v2_1Layer, self).__init__()
+        d_model = args.hid_dim
+        self.device = args.device
+        self.hid_dim = args.hid_dim
+        self.N = args.ndim
+        # self.M = args.npatch
+        self.batch_size = None
+        self.supports = supports
+        self.n_layer = args.nlayer
+        self.gcs = nn.ModuleList()
+        self.alpha = args.alpha
+        self.res = args.res
+        ### Intra-time series modeling ##
+        ## Time embedding
+        self.te_scale = nn.Linear(1, 1)
+        self.te_periodic = nn.Linear(1, args.hid_dim - 1)
+        self.patch_layer = args.patch_layer
+        self.obs_enc = nn.Linear(1, args.hid_dim)
+
+
+
+        nodevec_dim = args.node_dim
+        self.nodevec_dim = nodevec_dim
+
+        self.nodevec = nn.Parameter(torch.randn(self.N, d_model).cuda(), requires_grad=True)
+        self.relu = nn.ReLU()
+        # self.nodevec = nn.Parameter(torch.FloatTensor(self.N, d_model))
+        # nn.init.xavier_uniform_(self.nodevec)
+
+
+        ### Encoder output layer ###
+        # self.outlayer = args.outlayer
+        enc_dim = args.hid_dim
+
+
+        self.gcs.append(BaselineGTrans(args.nhead, d_model, d_model, self.alpha, 1, self.res))
+
+        self.w_q = nn.Parameter(torch.FloatTensor(d_model, d_model))
+        self.w_k = nn.Parameter(torch.FloatTensor(d_model, d_model))
+        self.w_v = nn.Parameter(torch.FloatTensor(d_model, d_model))
+
+        nn.init.xavier_uniform_(self.w_q)
+        nn.init.xavier_uniform_(self.w_k)
+        nn.init.xavier_uniform_(self.w_v)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model, d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model, 1)
+        )
+
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)
+        out1 = self.te_scale(tt)
+        out2 = torch.sin(self.te_periodic(tt))
+        return torch.cat([out1, out2], -1)
+
+    def IMTS_Model(self, x, mask_X, x_time, x_uncertainty):
+        """
+        x (B, N, M, L, F)
+        mask_X (B, N, M, L, 1)
+        x_time (B, N, M, L, 1)
+        """
+        B, N, M, L, D = x.shape
+        layer_nums = int(math.log2(M)) + 1
+
+        # 创建一个形状为 [N] 的张量，包含变量下标
+        variable_indices = torch.arange(N).to(x.device)
+
+        # for i in range(layer_nums + 1):
+        B, N, M, L, D = x.shape
+
+        # 将其扩展成形状为 [1, N, 1, 1, 1]
+        cur_variable_indices = variable_indices.view(1, N, 1, 1, 1)
+
+        # 利用广播机制，将其扩展成形状为 [B, N, M, L, D]
+        cur_variable_indices = cur_variable_indices.expand(B, N, M, L, 1)
+        # 并行式
+        cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
+        cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
+        cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
+
+        # 生成图结构
+        cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
+        cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
+        int_max = torch.iinfo(torch.int32).max
+        element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
+
+        if element_count > int_max:
+            once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
+            sd = 0
+            ed = once_num
+            total_num = math.ceil(B / once_num)
+            for k in range(total_num):
+                if k == 0:
+                    edge_ind = torch.where(cur_adj[sd:ed] == 1)
+                    edge_ind_0 = edge_ind[0]
+                    edge_ind_1 = edge_ind[1]
+                    edge_ind_2 = edge_ind[2]
+                    edge_ind_3 = edge_ind[3]
+                elif k == total_num - 1:
+                    cur_edge_ind = torch.where(cur_adj[sd:] == 1)
+                    edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
+                    edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
+                    edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
+                    edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
+                    edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
+                else:
+                    cur_edge_ind = torch.where(cur_adj[sd:ed] == 1)
+                    edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
+                    edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
+                    edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
+                    edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
+                sd += once_num
+                ed += once_num
+
+        else:
+            edge_ind = torch.where(cur_adj == 1)
+
+        source_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[2])
+        target_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[3])
+        edge_index = torch.cat([source_nodes.unsqueeze(0), target_nodes.unsqueeze(0)])
+
+        edge_time = torch.squeeze(cur_x_time[source_nodes] - cur_x_time[target_nodes])
+
+        edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+        edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+        edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
+        edge_self = torch.where((edge_same_time_diff_var + edge_diff_time_same_var) == 2)
+        edge_same_time_diff_var[edge_self] = 0.0
+
+        # 图神经网络传播节点状态
+        for gc in self.gcs:
+            cur_x = gc(cur_x, edge_index, edge_time, cur_x_time, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, 0)
+        x = rearrange(cur_x, '(b m n l) c -> b n m l c', b=B, n=N, m=M, l=L)
+        x = x.reshape(B, N, -1, D).unsqueeze(2)
+        mask_X = mask_X.reshape(B, N, -1, 1).unsqueeze(2)
+        x_time = x_time.reshape(B, N, -1, 1).unsqueeze(2)
+
+        obs_num_per_patch = torch.sum(mask_X, dim=3)  # mask_X.shape[B, N, M, L, 1]
+        x_time_per_patch = torch.sum(x_time, dim=3)  # x_time.shape[B, N, M, L, 1]
+        avg_x_time = x_time_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
+                                                obs_num_per_patch)
+        avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
+        time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
+        Q = torch.matmul(avg_te, self.w_q)
+        K = torch.matmul(time_te, self.w_k)
+        V = torch.matmul(x, self.w_v)
+        attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
+        attention = torch.div(attention, Q.shape[-1] ** 0.5)
+        attention[torch.where(mask_X == 0)] = -1e10
+        scale_attention = torch.softmax(attention, dim=-2)
+        x = torch.sum((V * scale_attention), dim=-2)
+
+        return torch.squeeze(x)
+
+    def forecasting(self, time_steps_to_predict, X, truth_time_steps, mask=None):
+    # def forward(self, observed_tp, observed_data, observed_mask, tau, return_almat=False):
+        """
+        X (B, M, L, N)
+        truth_time_steps (B, M, L, N) [0, 1]
+        mask (B, M, L, N)
+
+        To ====>
+        X (B*N*M, L, 1)
+        truth_time_steps (B*N*M, L, 1)
+        mask_X (B*N*M, L, 1)
+        """
+
+        B, M, L_in, N = X.shape
+        self.batch_size = B
+        X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
+        X = self.obs_enc(X)
+        truth_time_steps = truth_time_steps.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
+        mask = mask.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
+        te_his = self.LearnableTE(truth_time_steps)  # (B, N, M, L, F_te)
+        # print(time.max(), time.mean(), time.min(), time.shape, te.shape)
+        var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
+        # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
+        X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
+        ### *** a encoder to model irregular time series
+        h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
+
+        """ Decoder """
+        L_pred = time_steps_to_predict.shape[-1]
+        h = h.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
+        # print(h.shape, time_steps_to_predict.shape)
+        time_steps_to_predict = time_steps_to_predict.view(B, 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
+        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
+
+        h = torch.cat([h, te_pred], dim=-1)  # (B, N, Lp, F)
+
+        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
+        outputs = self.decoder(h).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
+
+        return outputs  # (1, B, Lp, N)
+
+
+class BaselineHPG_v2_AddLayer1(nn.Module):
+    def __init__(self, args, supports=None):
+        super(BaselineHPG_v2_AddLayer1, self).__init__()
+        d_model = args.hid_dim
+        self.device = args.device
+        self.hid_dim = args.hid_dim
+        self.N = args.ndim
+        # self.M = args.npatch
+        self.batch_size = None
+        self.supports = supports
+        self.n_layer = args.nlayer
+        self.gcs = nn.ModuleList()
+        self.alpha = args.alpha
+        self.res = args.res
+        ### Intra-time series modeling ##
+        ## Time embedding
+        self.te_scale = nn.Linear(1, 1)
+        self.te_periodic = nn.Linear(1, args.hid_dim - 1)
+        self.patch_layer = args.patch_layer
+        self.scale_patch_size = args.scale_patch_size
+        self.obs_enc = nn.Linear(1, args.hid_dim)
+
+
+
+        nodevec_dim = args.node_dim
+        self.nodevec_dim = nodevec_dim
+        self.nodevec = nn.Parameter(torch.randn(self.N, d_model).cuda(), requires_grad=True)
+        self.relu = nn.ReLU()
+
+        enc_dim = args.hid_dim
+
+        for l in range(self.n_layer):
+            self.gcs.append(BaselineGTrans(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
+
+        self.w_q = nn.Parameter(torch.FloatTensor(d_model, d_model))
+        self.w_k = nn.Parameter(torch.FloatTensor(d_model, d_model))
+        self.w_v = nn.Parameter(torch.FloatTensor(d_model, d_model))
+
+        nn.init.xavier_uniform_(self.w_q)
+        nn.init.xavier_uniform_(self.w_k)
+        nn.init.xavier_uniform_(self.w_v)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model, d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model, 1)
+        )
+
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)
+        out1 = self.te_scale(tt)
+        out2 = torch.sin(self.te_periodic(tt))
+        return torch.cat([out1, out2], -1)
+
+    def IMTS_Model(self, x, mask_X, x_time, x_uncertainty):
+        """
+        x (B, N, M, L, F)
+        mask_X (B, N, M, L, 1)
+        x_time (B, N, M, L, 1)
+        """
+        B, N, M, L, D = x.shape
+        layer_nums = int(math.log2(M)) + 1
+
+        # 创建一个形状为 [N] 的张量，包含变量下标
+        variable_indices = torch.arange(N).to(x.device)
+
+        # for i in range(layer_nums + 1):
+        B, N, M, L, D = x.shape
+
+        # 将其扩展成形状为 [1, N, 1, 1, 1]
+        cur_variable_indices = variable_indices.view(1, N, 1, 1, 1)
+
+        # 利用广播机制，将其扩展成形状为 [B, N, M, L, D]
+        cur_variable_indices = cur_variable_indices.expand(B, N, M, L, 1)
+
+        # 并行式
+        cur_x = rearrange(x, 'b n m l c -> (b n m l) c')
+        cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b n m l) c')
+        cur_x_time = rearrange(x_time, 'b n m l c -> (b n m l) c')
+
+
+        cur_t_indices = rearrange(x_time, 'b n m l c -> b (n m l) c')
+
+        missing_indices = torch.where(mask_X.reshape(B, -1) == 0)
+
+        cur_t_indices = cur_t_indices.reshape(B, -1)
+
+        t_indices_matrix_1 = cur_t_indices.unsqueeze(1).expand(B, N * M * L, N * M * L)
+        t_indices_matrix_2 = cur_t_indices.unsqueeze(-1).expand(B, N * M * L, N * M * L)
+
+        t_interval = t_indices_matrix_1 - t_indices_matrix_2
+        t_interval[missing_indices[0], missing_indices[1]] = torch.ones(len(missing_indices[0]), N * M * L).to(
+            x.device)
+        t_interval[missing_indices[0], :, missing_indices[1]] = torch.ones(len(missing_indices[0]), N * M * L).to(
+            x.device)
+        # cur_adj = patch_interval == 1 and patch_interval == -1
+
+        edge_ind = torch.where(torch.abs(t_interval) < self.scale_patch_size)
+
+        source_nodes = (N * M * L * edge_ind[0] + edge_ind[1])
+        target_nodes = (N * M * L * edge_ind[0] + edge_ind[2])
+
+        edge_index = torch.cat([source_nodes.unsqueeze(0), target_nodes.unsqueeze(0)])
+
+        edge_time = torch.squeeze(cur_x_time[source_nodes] - cur_x_time[target_nodes])
+
+        edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+        edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+        edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
+        edge_self = torch.where((edge_same_time_diff_var + edge_diff_time_same_var) == 2)
+        edge_same_time_diff_var[edge_self] = 0.0
+
+        # 图神经网络传播节点状态
+        for gc in self.gcs:
+            cur_x = gc(cur_x, edge_index, edge_time, cur_x_time, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, 0)
+        x = rearrange(cur_x, '(b n m l) c -> b n m l c', b=B, n=N, m=M, l=L)
+
+        # 池化聚合同一Patch 同一变量的隐藏状态
+        # 若Patch为奇数个，创建一个虚拟节点
+        if M > 1 and M % 2 != 0:
+            x = torch.cat([x, x[:, :, -1, :].unsqueeze(2)], dim=2)
+            mask_X = torch.cat([mask_X, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
+            x_time = torch.cat([x_time, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
+            M = M + 1
+
+        obs_num_per_patch = torch.sum(mask_X, dim=3)  # mask_X.shape[B, N, M, L, 1]
+        x_time_per_patch = torch.sum(x_time, dim=3)  # x_time.shape[B, N, M, L, 1]
+        avg_x_time = x_time_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
+                                                obs_num_per_patch)
+        avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
+        time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
+        Q = torch.matmul(avg_te, self.w_q)
+        K = torch.matmul(time_te, self.w_k)
+        V = torch.matmul(x, self.w_v)
+        attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
+        attention = torch.div(attention, Q.shape[-1] ** 0.5)
+        attention[torch.where(mask_X == 0)] = -1e10
+        scale_attention = torch.softmax(attention, dim=-2)
+        mask_X = (obs_num_per_patch > 0).float()
+        x = torch.sum((V * scale_attention), dim=-2)
+        x_time = avg_x_time
+
+        for n_layer in range(1, self.patch_layer):
+            B, N, T, D = x.shape
+
+            cur_x = x.reshape(-1, D)
+            cur_x_time = x_time.reshape(-1, 1)
+
+            cur_variable_indices = variable_indices.view(1, N, 1, 1)
+
+            # 利用广播机制，将其扩展成形状为 [B, N, M, L, D]
+            cur_variable_indices = cur_variable_indices.expand(B, N, T, 1).reshape(-1, 1)
+
+            patch_indices = torch.arange(T).float().to(x.device)
+
+            cur_patch_indices = patch_indices.view(1, 1, T)
+            missing_indices = torch.where(mask_X.reshape(B, -1) == 0)
+
+            cur_patch_indices = cur_patch_indices.expand(B, N, T).reshape(B, -1)
+
+            patch_indices_matrix_1 = cur_patch_indices.unsqueeze(1).expand(B, N * T, N * T)
+            patch_indices_matrix_2 = cur_patch_indices.unsqueeze(-1).expand(B, N * T, N * T)
+
+            patch_interval = patch_indices_matrix_1 - patch_indices_matrix_2
+            patch_interval[missing_indices[0], missing_indices[1]] = torch.zeros(len(missing_indices[0]), N * T).to(x.device)
+            patch_interval[missing_indices[0], :, missing_indices[1]] = torch.zeros(len(missing_indices[0]), N * T).to(x.device)
+            # cur_adj = patch_interval == 1 and patch_interval == -1
+
+            edge_ind = torch.where(torch.abs(patch_interval) == 1)
+
+            source_nodes = (N * T * edge_ind[0] + edge_ind[1])
+            target_nodes = (N * T * edge_ind[0] + edge_ind[2])
+            edge_index = torch.cat([source_nodes.unsqueeze(0), target_nodes.unsqueeze(0)])
+
+            edge_time = torch.squeeze(cur_x_time[source_nodes] - cur_x_time[target_nodes])
+
+            edge_diff_time_same_var = (
+                        (cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+            edge_same_time_diff_var = ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+            edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
+            edge_self = torch.where((edge_same_time_diff_var + edge_diff_time_same_var) == 2)
+            edge_same_time_diff_var[edge_self] = 0.0
+
+            # 图神经网络传播节点状态
+            for gc in self.gcs:
+                cur_x = gc(cur_x, edge_index, edge_time, cur_x_time, edge_same_time_diff_var, edge_diff_time_same_var,
+                           edge_diff_time_diff_var, n_layer)
+            x = rearrange(cur_x, '(b n t) c -> b n t c', b=B, n=N, t=T, c=D)
+
+            # 池化聚合同一Patch 同一变量的隐藏状态
+            # 若Patch为奇数个，创建一个虚拟节点
+            if T > 1 and T % 2 != 0:
+                x = torch.cat([x, x[:, :, -1, :].unsqueeze(-2)], dim=2)
+                mask_X = torch.cat([mask_X, torch.zeros(size=[B, N, 1, 1]).to(x.device)], dim=2)
+                x_time = torch.cat([x_time, torch.zeros(size=[B, N, 1, 1]).to(x.device)], dim=2)
+                T = T + 1
+
+            x = x.view(B, N, T // 2, 2, D)
+            x_time = x_time.view(B, N, T // 2, 2, 1)
+            mask_X = mask_X.view(B, N, T // 2, 2, 1)
+
+            obs_num_per_patch = torch.sum(mask_X, dim=3)  # mask_X.shape[B, N, M, L, 1]
+            x_time_per_patch = torch.sum(x_time, dim=3)  # x_time.shape[B, N, M, L, 1]
+            avg_x_time = x_time_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
+                                                        obs_num_per_patch)
+            avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
+            time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
+            Q = torch.matmul(avg_te, self.w_q)
+            K = torch.matmul(time_te, self.w_k)
+            V = torch.matmul(x, self.w_v)
+            attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
+            attention = torch.div(attention, Q.shape[-1] ** 0.5)
+            attention[torch.where(mask_X == 0)] = -1e10
+            scale_attention = torch.softmax(attention, dim=-2)
+
+            mask_X = (obs_num_per_patch > 0).float()
+            x = torch.sum((V * scale_attention), dim=-2)
+            x_time = avg_x_time
+
+            # x = x.view(B, N, M // 2, 2, D)
+            # x_time = x_time.view(B, N, M // 2, 2, 1)
+            # mask_X = mask_X.view(B, N, M // 2, 2, 1)
+            # x_uncertainty = x_uncertainty.view(B, N, M // 2, 2)
+
+
+
+        return torch.squeeze(x)
+
+    def forecasting(self, time_steps_to_predict, X, truth_time_steps, mask=None):
+    # def forward(self, observed_tp, observed_data, observed_mask, tau, return_almat=False):
+        """
+        X (B, M, L, N)
+        truth_time_steps (B, M, L, N) [0, 1]
+        mask (B, M, L, N)
+
+        To ====>
+        X (B*N*M, L, 1)
+        truth_time_steps (B*N*M, L, 1)
+        mask_X (B*N*M, L, 1)
+        """
+
+        B, M, L_in, N = X.shape
+        self.batch_size = B
+        X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
+        X = self.obs_enc(X)
+        truth_time_steps = truth_time_steps.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
+        mask = mask.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
+        te_his = self.LearnableTE(truth_time_steps)  # (B, N, M, L, F_te)
+        # print(time.max(), time.mean(), time.min(), time.shape, te.shape)
+        var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
+        # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
+        X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
+        ### *** a encoder to model irregular time series
+        h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
+
+        """ Decoder """
+        L_pred = time_steps_to_predict.shape[-1]
+        h = h.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
+        # print(h.shape, time_steps_to_predict.shape)
+        time_steps_to_predict = time_steps_to_predict.view(B, 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
+        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
+
+        h = torch.cat([h, te_pred], dim=-1)  # (B, N, Lp, F)
+
+        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
+        outputs = self.decoder(h).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
+
+        return outputs  # (1, B, Lp, N)
+
+
+class BaselineHPG_LastRef(nn.Module):
+    def __init__(self, args, supports=None):
+        super(BaselineHPG_LastRef, self).__init__()
+        d_model = args.hid_dim
+        self.device = args.device
+        self.hid_dim = args.hid_dim
+        self.N = args.ndim
+        # self.M = args.npatch
+        self.batch_size = None
+        self.supports = supports
+        self.n_layer = args.nlayer
+        self.gcs = nn.ModuleList()
+        self.alpha = args.alpha
+        self.res = args.res
+        ### Intra-time series modeling ##
+        ## Time embedding
+        self.te_scale = nn.Linear(1, 1)
+        self.te_periodic = nn.Linear(1, args.hid_dim - 1)
+        self.patch_layer = args.patch_layer
+        self.obs_enc = nn.Linear(1, args.hid_dim)
+
+
+
+        nodevec_dim = args.node_dim
+        self.nodevec_dim = nodevec_dim
+
+        self.nodevec = nn.Parameter(torch.randn(self.N, d_model).cuda(), requires_grad=True)
+        self.relu = nn.ReLU()
+        # self.nodevec = nn.Parameter(torch.FloatTensor(self.N, d_model))
+        # nn.init.xavier_uniform_(self.nodevec)
+
+
+        ### Encoder output layer ###
+        # self.outlayer = args.outlayer
+        enc_dim = args.hid_dim
+
+        for l in range(self.n_layer):
+            # self.gcs.append(UA_GTrans(1, nodevec_dim + enc_dim + args.te_dim, nodevec_dim + enc_dim + args.te_dim, self.alpha))
+            self.gcs.append(BaselineGTrans(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
+
+        self.w_q = nn.Parameter(torch.FloatTensor(d_model, d_model))
+        self.w_k = nn.Parameter(torch.FloatTensor(d_model, d_model))
+        self.w_v = nn.Parameter(torch.FloatTensor(d_model, d_model))
+
+        nn.init.xavier_uniform_(self.w_q)
+        nn.init.xavier_uniform_(self.w_k)
+        nn.init.xavier_uniform_(self.w_v)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model, d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model, 1)
+        )
+
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)
+        out1 = self.te_scale(tt)
+        out2 = torch.sin(self.te_periodic(tt))
+        return torch.cat([out1, out2], -1)
+
+    def IMTS_Model(self, x, mask_X, x_time, x_uncertainty):
+        """
+        x (B, N, M, L, F)
+        mask_X (B, N, M, L, 1)
+        x_time (B, N, M, L, 1)
+        """
+        B, N, M, L, D = x.shape
+        layer_nums = int(math.log2(M)) + 1
+
+        # 创建一个形状为 [N] 的张量，包含变量下标
+        variable_indices = torch.arange(N).to(x.device)
+
+        # for i in range(layer_nums + 1):
+        for n_layer in range(self.patch_layer):
+            B, N, M, L, D = x.shape
+
+            # 将其扩展成形状为 [1, N, 1, 1, 1]
+            cur_variable_indices = variable_indices.view(1, N, 1, 1, 1)
+
+            # 利用广播机制，将其扩展成形状为 [B, N, M, L, D]
+            cur_variable_indices = cur_variable_indices.expand(B, N, M, L, 1)
+            # 并行式
+            cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
+            cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
+            cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
+
+            # 生成图结构
+            cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
+            cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
+            # cur_adj_0 = torch.matmul(cur_mask[:B // 3], cur_mask[:B // 3].permute(0, 1, 3, 2))
+            # cur_adj_1 = torch.matmul(cur_mask[B//3:2*B//3], cur_mask[B//3:2*B//3].permute(0, 1, 3, 2))
+            # cur_adj_2 = torch.matmul(cur_mask[2*B//3:], cur_mask[2*B//3:].permute(0, 1, 3, 2))
+            # cur_adj = torch.cat([cur_adj_0, cur_adj_1, cur_adj_2], dim=0)
+
+            int_max = torch.iinfo(torch.int32).max
+            # int_max = 1100000000
+            # int_max = 32550000
+            element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
+
+            if element_count > int_max:
+                once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
+                sd = 0
+                ed = once_num
+                total_num = math.ceil(B / once_num)
+                for k in range(total_num):
+                    if k == 0:
+                        edge_ind = torch.where(cur_adj[sd:ed] == 1)
+                        edge_ind_0 = edge_ind[0]
+                        edge_ind_1 = edge_ind[1]
+                        edge_ind_2 = edge_ind[2]
+                        edge_ind_3 = edge_ind[3]
+                    elif k == total_num - 1:
+                        cur_edge_ind = torch.where(cur_adj[sd:] == 1)
+                        edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
+                        edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
+                        edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
+                        edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
+                        edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
+                    else:
+                        cur_edge_ind = torch.where(cur_adj[sd:ed] == 1)
+                        edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
+                        edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
+                        edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
+                        edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
+                    sd += once_num
+                    ed += once_num
+
+            else:
+                edge_ind = torch.where(cur_adj == 1)
+
+            source_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[2])
+            target_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[3])
+            edge_index = torch.cat([source_nodes.unsqueeze(0), target_nodes.unsqueeze(0)])
+
+            edge_time = torch.squeeze(cur_x_time[source_nodes] - cur_x_time[target_nodes])
+
+            edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+            edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+
+            # edge_same_time_diff_var= ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+            # edge_diff_time_same_var = ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+
+            edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
+            # edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) > 100).float()
+            edge_self = torch.where((edge_same_time_diff_var + edge_diff_time_same_var) == 2)
+            edge_same_time_diff_var[edge_self] = 0.0
+            # edge_diff_time_same_var[edge_self] = 0.0
+
+            # 图神经网络传播节点状态
+            # cur_x = self.gcs(cur_x, edge_index, edge_time, cur_x_time, edge_same)
+            for gc in self.gcs:
+                cur_x = gc(cur_x, edge_index, edge_time, cur_x_time, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, n_layer)
+            # cur_x = self.base_conv(cur_x, edge_index, edge_time, cur_x_time, edge_same)
+            # x = cur_x.reshape(B, N, M, L, D)
+            x = rearrange(cur_x, '(b m n l) c -> b n m l c', b=B, n=N, m=M, l=L)
+
+            # 池化聚合同一Patch 同一变量的隐藏状态
+            # 若Patch为奇数个，创建一个虚拟节点
+            if M > 1 and M % 2 != 0:
+                x = torch.cat([x, x[:, :, -1, :].unsqueeze(2)], dim=2)
+                mask_X = torch.cat([mask_X, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
+                x_time = torch.cat([x_time, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
+                M = M + 1
+
+
+            obs_num_per_patch = torch.sum(mask_X, dim=3)  # mask_X.shape[B, N, M, L, 1]
+            x_time_per_patch = torch.sum(x_time, dim=3)  # x_time.shape[B, N, M, L, 1]
+            avg_x_time = x_time_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
+                                                    obs_num_per_patch)
+            last_time = torch.fill_(torch.zeros(B, N, 1, 1), torch.max(x_time)).to(x.device)
+
+            last_time_te = self.LearnableTE(last_time)
+            time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
+            avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
+
+            Q = torch.matmul(last_time_te, self.w_q)
+            K = torch.matmul(time_te.reshape(B, N, -1, D), self.w_k)
+            V = torch.matmul(x.reshape(B, N, -1, D), self.w_v)
+            attention = torch.matmul(Q, K.permute(0, 1, 3, 2)).permute(0, 1, 3, 2)
+            attention = torch.div(attention, Q.shape[-1] ** 0.5)
+            attention[torch.where(mask_X.reshape(B, N, -1, 1) == 0)] = -1e10
+            scale_attention = torch.softmax(attention, dim=-2)
+            if n_layer == 0:
+                cur_scale_rep = torch.sum((V * scale_attention), dim=-2)
+            else:
+                cur_scale_rep = cur_scale_rep + torch.sum((V * scale_attention), dim=-2)
+
+            Q = torch.matmul(avg_te, self.w_q)
+            K = torch.matmul(time_te, self.w_k)
+            V = torch.matmul(x, self.w_v)
+            attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
+            attention = torch.div(attention, Q.shape[-1] ** 0.5)
+            attention[torch.where(mask_X == 0)] = -1e10
+            scale_attention = torch.softmax(attention, dim=-2)
+            mask_X = (obs_num_per_patch > 0).float()
+            x = torch.sum((V * scale_attention), dim=-2)
+
+            x_time = avg_x_time
+            if M == 1:
+                return cur_scale_rep
+                # return torch.squeeze(x)
+
+
+            x = x.view(B, N, M // 2, 2, D)
+            x_time = x_time.view(B, N, M // 2, 2, 1)
+            mask_X = mask_X.view(B, N, M // 2, 2, 1)
+            # x_uncertainty = x_uncertainty.view(B, N, M // 2, 2)
+
+        return torch.squeeze(x)
+
+    def forecasting(self, time_steps_to_predict, X, truth_time_steps, mask=None):
+    # def forward(self, observed_tp, observed_data, observed_mask, tau, return_almat=False):
+        """
+        X (B, M, L, N)
+        truth_time_steps (B, M, L, N) [0, 1]
+        mask (B, M, L, N)
+
+        To ====>
+        X (B*N*M, L, 1)
+        truth_time_steps (B*N*M, L, 1)
+        mask_X (B*N*M, L, 1)
+        """
+
+        B, M, L_in, N = X.shape
+        self.batch_size = B
+        X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
+        X = self.obs_enc(X)
+        truth_time_steps = truth_time_steps.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
+        mask = mask.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
+        te_his = self.LearnableTE(truth_time_steps)  # (B, N, M, L, F_te)
+        # print(time.max(), time.mean(), time.min(), time.shape, te.shape)
+        var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
+        # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
+        X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
+        ### *** a encoder to model irregular time series
+        h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
+
+        """ Decoder """
+        L_pred = time_steps_to_predict.shape[-1]
+        h = h.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
+        # print(h.shape, time_steps_to_predict.shape)
+        time_steps_to_predict = time_steps_to_predict.view(B, 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
+        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
+
+        h = torch.cat([h, te_pred], dim=-1)  # (B, N, Lp, F)
+
+        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
+        outputs = self.decoder(h).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
+
+        return outputs  # (1, B, Lp, N)
+
+
 class BaselineHPG_WOTEAGG(nn.Module):
     def __init__(self, args, supports=None):
         super(BaselineHPG_WOTEAGG, self).__init__()
@@ -3025,6 +4047,13 @@ class BaselineHPG_WOTEAGG(nn.Module):
 
         self.nodevec = nn.Parameter(torch.randn(self.N, d_model).cuda(), requires_grad=True)
         self.relu = nn.ReLU()
+        # self.nodevec = nn.Parameter(torch.FloatTensor(self.N, d_model))
+        # nn.init.xavier_uniform_(self.nodevec)
+
+
+        ### Encoder output layer ###
+        # self.outlayer = args.outlayer
+        enc_dim = args.hid_dim
 
         for l in range(self.n_layer):
             # self.gcs.append(UA_GTrans(1, nodevec_dim + enc_dim + args.te_dim, nodevec_dim + enc_dim + args.te_dim, self.alpha))
@@ -3069,13 +4098,17 @@ class BaselineHPG_WOTEAGG(nn.Module):
             cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
             cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
             cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
-            # cur_x_uncertainty = rearrange(x_uncertainty, 'b n m l -> (b m n l)')
 
             # 生成图结构
             cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
             cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
+            # cur_adj_0 = torch.matmul(cur_mask[:B // 3], cur_mask[:B // 3].permute(0, 1, 3, 2))
+            # cur_adj_1 = torch.matmul(cur_mask[B//3:2*B//3], cur_mask[B//3:2*B//3].permute(0, 1, 3, 2))
+            # cur_adj_2 = torch.matmul(cur_mask[2*B//3:], cur_mask[2*B//3:].permute(0, 1, 3, 2))
+            # cur_adj = torch.cat([cur_adj_0, cur_adj_1, cur_adj_2], dim=0)
 
             int_max = torch.iinfo(torch.int32).max
+            # int_max = 1100000000
             # int_max = 32550000
             element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
 
@@ -3083,7 +4116,7 @@ class BaselineHPG_WOTEAGG(nn.Module):
                 once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
                 sd = 0
                 ed = once_num
-                total_num = math.ceil(B // once_num) + 1
+                total_num = math.ceil(B / once_num)
                 for k in range(total_num):
                     if k == 0:
                         edge_ind = torch.where(cur_adj[sd:ed] == 1)
@@ -3099,7 +4132,7 @@ class BaselineHPG_WOTEAGG(nn.Module):
                         edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
                         edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
                     else:
-                        cur_edge_ind = torch.where(cur_adj[sd:ed].unsqueeze(0) == 1)
+                        cur_edge_ind = torch.where(cur_adj[sd:ed] == 1)
                         edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
                         edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
                         edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
@@ -3118,6 +4151,9 @@ class BaselineHPG_WOTEAGG(nn.Module):
 
             edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
             edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+
+            # edge_same_time_diff_var= ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+            # edge_diff_time_same_var = ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
 
             edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
             # edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) > 100).float()
@@ -3150,13 +4186,31 @@ class BaselineHPG_WOTEAGG(nn.Module):
             # avg_x_time[torch.where(obs_num_per_patch == 1)] = torch.max(x_time, dim=3)[0][torch.where(obs_num_per_patch == 1)]
             # avg_x_time[torch.where(obs_num_per_patch > 1)] = ((torch.max(x_time, dim=3)[0] + torch.min(x_time, dim=3)[0]) / 2)[torch.where(obs_num_per_patch > 1)]
             node_state_sum_per_patch = torch.sum(x, dim=3)  # x.shape[B, N, M, L, D]
+
+
             x = node_state_sum_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
                                                     obs_num_per_patch)
+            # avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
+            # time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
+            # Q = torch.matmul(avg_te, self.w_q)
+            # K = torch.matmul(time_te, self.w_k)
+            # V = torch.matmul(x, self.w_v)
+            # V = x
+
+
+            # K = torch.matmul(x, self.w_k).view(-1 ,L, D)
+            # Q = F.normalize(Q, p=2, dim=-1)
+            # K = F.normalize(K, p=2, dim=-1)
+            # attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
+            # # attention = torch.matmul(Q.unsqueeze(-2), K.unsqueeze(-1))
+            # attention = torch.div(attention, Q.shape[-1] ** 0.5)
+            # attention[torch.where(mask_X == 0)] = -1e10
+            # scale_attention = torch.softmax(attention, dim=-2)
             mask_X = (obs_num_per_patch > 0).float()
+            # x = torch.sum((V * scale_attention), dim=-2)
             # x = torch.sum((V * scale_attention), dim=-2) + avg_te.squeeze(-2)
 
             x_time = avg_x_time
-
             if M == 1:
                 return torch.squeeze(x)
 
@@ -3164,6 +4218,7 @@ class BaselineHPG_WOTEAGG(nn.Module):
             x = x.view(B, N, M // 2, 2, D)
             x_time = x_time.view(B, N, M // 2, 2, 1)
             mask_X = mask_X.view(B, N, M // 2, 2, 1)
+            # x_uncertainty = x_uncertainty.view(B, N, M // 2, 2)
 
         return torch.squeeze(x)
 
@@ -3180,7 +4235,6 @@ class BaselineHPG_WOTEAGG(nn.Module):
         mask_X (B*N*M, L, 1)
         """
 
-        # print("data shape:", time_steps_to_predict.shape, X.shape, truth_time_steps.shape, mask.shape)
         B, M, L_in, N = X.shape
         self.batch_size = B
         X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
@@ -3192,12 +4246,8 @@ class BaselineHPG_WOTEAGG(nn.Module):
         var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
         # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
         X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
-
-
         ### *** a encoder to model irregular time series
-        # assert not torch.any(torch.isnan(X))
         h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
-        # h = torch.mean(h, dim=-1)
 
         """ Decoder """
         L_pred = time_steps_to_predict.shape[-1]
@@ -3219,12 +4269,12 @@ class BaselineGTrans_WOLayerSpecParam(MessagePassing):
         super(BaselineGTrans_WOLayerSpecParam, self).__init__(aggr='add', **kwargs)
         self.n_heads = n_heads
         # self.dropout = nn.Dropout(dropout)
-        # self.patch_layer = 1
+        self.patch_layer = patch_layer
         self.res = res
         self.d_input = d_input
         self.d_k = d_k // n_heads
         self.d_q = d_k // n_heads
-        self.d_e = d_k // n_heads
+        self.d_e = d_input // n_heads
         self.d_sqrt = math.sqrt(d_k // n_heads)
         self.alpha = alpha
         # Attention Layer Initialization
@@ -3278,8 +4328,8 @@ class BaselineGTrans_WOLayerSpecParam(MessagePassing):
            :param edges_temporal: [num_edge,d]
            :return:
         '''
-        n_layer = 0
         messages = []
+        n_layer = 0
         for i in range(self.n_heads):
             w_k = self.w_k_list[i][n_layer]
             bias_k = self.bias_k_list[i][n_layer]
@@ -3289,6 +4339,7 @@ class BaselineGTrans_WOLayerSpecParam(MessagePassing):
 
             w_v = self.w_v_list[i][n_layer]
             bias_v = self.bias_v_list[i][n_layer]
+
 
             x_j_transfer = x_j
 
@@ -3379,10 +4430,8 @@ class BaselineHPG_WOLayerSpecParam(nn.Module):
         enc_dim = args.hid_dim
 
         for l in range(self.n_layer):
+            # self.gcs.append(UA_GTrans(1, nodevec_dim + enc_dim + args.te_dim, nodevec_dim + enc_dim + args.te_dim, self.alpha))
             self.gcs.append(BaselineGTrans_WOLayerSpecParam(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
-
-        # self.w_q = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-        # self.w_k = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
 
         self.w_q = nn.Parameter(torch.FloatTensor(d_model, d_model))
         self.w_k = nn.Parameter(torch.FloatTensor(d_model, d_model))
@@ -3431,13 +4480,17 @@ class BaselineHPG_WOLayerSpecParam(nn.Module):
             cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
             cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
             cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
-            # cur_x_uncertainty = rearrange(x_uncertainty, 'b n m l -> (b m n l)')
 
             # 生成图结构
             cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
             cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
+            # cur_adj_0 = torch.matmul(cur_mask[:B // 3], cur_mask[:B // 3].permute(0, 1, 3, 2))
+            # cur_adj_1 = torch.matmul(cur_mask[B//3:2*B//3], cur_mask[B//3:2*B//3].permute(0, 1, 3, 2))
+            # cur_adj_2 = torch.matmul(cur_mask[2*B//3:], cur_mask[2*B//3:].permute(0, 1, 3, 2))
+            # cur_adj = torch.cat([cur_adj_0, cur_adj_1, cur_adj_2], dim=0)
 
             int_max = torch.iinfo(torch.int32).max
+            # int_max = 1100000000
             # int_max = 32550000
             element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
 
@@ -3445,7 +4498,7 @@ class BaselineHPG_WOLayerSpecParam(nn.Module):
                 once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
                 sd = 0
                 ed = once_num
-                total_num = math.ceil(B // once_num) + 1
+                total_num = math.ceil(B / once_num)
                 for k in range(total_num):
                     if k == 0:
                         edge_ind = torch.where(cur_adj[sd:ed] == 1)
@@ -3461,7 +4514,7 @@ class BaselineHPG_WOLayerSpecParam(nn.Module):
                         edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
                         edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
                     else:
-                        cur_edge_ind = torch.where(cur_adj[sd:ed].unsqueeze(0) == 1)
+                        cur_edge_ind = torch.where(cur_adj[sd:ed] == 1)
                         edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
                         edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
                         edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
@@ -3480,6 +4533,9 @@ class BaselineHPG_WOLayerSpecParam(nn.Module):
 
             edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
             edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+
+            # edge_same_time_diff_var= ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+            # edge_diff_time_same_var = ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
 
             edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
             # edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) > 100).float()
@@ -3537,13 +4593,6 @@ class BaselineHPG_WOLayerSpecParam(nn.Module):
             # x = torch.sum((V * scale_attention), dim=-2) + avg_te.squeeze(-2)
 
             x_time = avg_x_time
-            # x_time_emb = self.LearnableTE(x_time)
-            # x = torch.cat([x, x_time_emb], dim=-1)
-            # x_time = torch.sum((x_time.reshape(-1, L, 1) * scale_attention.unsqueeze(-1)), dim=1).reshape(B, N, M, 1)
-
-
-
-
             if M == 1:
                 return torch.squeeze(x)
 
@@ -3568,7 +4617,6 @@ class BaselineHPG_WOLayerSpecParam(nn.Module):
         mask_X (B*N*M, L, 1)
         """
 
-        # print("data shape:", time_steps_to_predict.shape, X.shape, truth_time_steps.shape, mask.shape)
         B, M, L_in, N = X.shape
         self.batch_size = B
         X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
@@ -3580,12 +4628,8 @@ class BaselineHPG_WOLayerSpecParam(nn.Module):
         var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
         # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
         X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
-
-
         ### *** a encoder to model irregular time series
-        # assert not torch.any(torch.isnan(X))
         h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
-        # h = torch.mean(h, dim=-1)
 
         """ Decoder """
         L_pred = time_steps_to_predict.shape[-1]
@@ -3601,10 +4645,10 @@ class BaselineHPG_WOLayerSpecParam(nn.Module):
 
         return outputs  # (1, B, Lp, N)
 
-class BaselineGTrans_WO3EdgeQKV(MessagePassing):
+class BaselineGTrans_WO3E(MessagePassing):
 
     def __init__(self, n_heads=2, d_input=6, d_k=6, alpha=0.9, patch_layer=1, res=1, **kwargs):
-        super(BaselineGTrans_WO3EdgeQKV, self).__init__(aggr='add', **kwargs)
+        super(BaselineGTrans_WO3E, self).__init__(aggr='add', **kwargs)
         self.n_heads = n_heads
         # self.dropout = nn.Dropout(dropout)
         self.patch_layer = patch_layer
@@ -3612,7 +4656,7 @@ class BaselineGTrans_WO3EdgeQKV(MessagePassing):
         self.d_input = d_input
         self.d_k = d_k // n_heads
         self.d_q = d_k // n_heads
-        self.d_e = d_k // n_heads
+        self.d_e = d_input // n_heads
         self.d_sqrt = math.sqrt(d_k // n_heads)
         self.alpha = alpha
         # Attention Layer Initialization
@@ -3730,9 +4774,9 @@ class BaselineGTrans_WO3EdgeQKV(MessagePassing):
     def __repr__(self):
         return '{}'.format(self.__class__.__name__)
 
-class BaselineHPG_WO3EdgeQKV(nn.Module):
+class BaselineHPG_WO3E(nn.Module):
     def __init__(self, args, supports=None):
-        super(BaselineHPG_WO3EdgeQKV, self).__init__()
+        super(BaselineHPG_WO3E, self).__init__()
         d_model = args.hid_dim
         self.device = args.device
         self.hid_dim = args.hid_dim
@@ -3768,10 +4812,7 @@ class BaselineHPG_WO3EdgeQKV(nn.Module):
 
         for l in range(self.n_layer):
             # self.gcs.append(UA_GTrans(1, nodevec_dim + enc_dim + args.te_dim, nodevec_dim + enc_dim + args.te_dim, self.alpha))
-            self.gcs.append(BaselineGTrans_WO3EdgeQKV(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
-
-        # self.w_q = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-        # self.w_k = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
+            self.gcs.append(BaselineGTrans_WO3E(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
 
         self.w_q = nn.Parameter(torch.FloatTensor(d_model, d_model))
         self.w_k = nn.Parameter(torch.FloatTensor(d_model, d_model))
@@ -3820,13 +4861,17 @@ class BaselineHPG_WO3EdgeQKV(nn.Module):
             cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
             cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
             cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
-            # cur_x_uncertainty = rearrange(x_uncertainty, 'b n m l -> (b m n l)')
 
             # 生成图结构
             cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
             cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
+            # cur_adj_0 = torch.matmul(cur_mask[:B // 3], cur_mask[:B // 3].permute(0, 1, 3, 2))
+            # cur_adj_1 = torch.matmul(cur_mask[B//3:2*B//3], cur_mask[B//3:2*B//3].permute(0, 1, 3, 2))
+            # cur_adj_2 = torch.matmul(cur_mask[2*B//3:], cur_mask[2*B//3:].permute(0, 1, 3, 2))
+            # cur_adj = torch.cat([cur_adj_0, cur_adj_1, cur_adj_2], dim=0)
 
             int_max = torch.iinfo(torch.int32).max
+            # int_max = 1100000000
             # int_max = 32550000
             element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
 
@@ -3834,7 +4879,7 @@ class BaselineHPG_WO3EdgeQKV(nn.Module):
                 once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
                 sd = 0
                 ed = once_num
-                total_num = math.ceil(B // once_num) + 1
+                total_num = math.ceil(B / once_num)
                 for k in range(total_num):
                     if k == 0:
                         edge_ind = torch.where(cur_adj[sd:ed] == 1)
@@ -3850,7 +4895,7 @@ class BaselineHPG_WO3EdgeQKV(nn.Module):
                         edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
                         edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
                     else:
-                        cur_edge_ind = torch.where(cur_adj[sd:ed].unsqueeze(0) == 1)
+                        cur_edge_ind = torch.where(cur_adj[sd:ed] == 1)
                         edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
                         edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
                         edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
@@ -3869,6 +4914,9 @@ class BaselineHPG_WO3EdgeQKV(nn.Module):
 
             edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
             edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+
+            # edge_same_time_diff_var= ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+            # edge_diff_time_same_var = ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
 
             edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
             # edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) > 100).float()
@@ -3926,13 +4974,6 @@ class BaselineHPG_WO3EdgeQKV(nn.Module):
             # x = torch.sum((V * scale_attention), dim=-2) + avg_te.squeeze(-2)
 
             x_time = avg_x_time
-            # x_time_emb = self.LearnableTE(x_time)
-            # x = torch.cat([x, x_time_emb], dim=-1)
-            # x_time = torch.sum((x_time.reshape(-1, L, 1) * scale_attention.unsqueeze(-1)), dim=1).reshape(B, N, M, 1)
-
-
-
-
             if M == 1:
                 return torch.squeeze(x)
 
@@ -3957,7 +4998,6 @@ class BaselineHPG_WO3EdgeQKV(nn.Module):
         mask_X (B*N*M, L, 1)
         """
 
-        # print("data shape:", time_steps_to_predict.shape, X.shape, truth_time_steps.shape, mask.shape)
         B, M, L_in, N = X.shape
         self.batch_size = B
         X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
@@ -3969,12 +5009,8 @@ class BaselineHPG_WO3EdgeQKV(nn.Module):
         var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
         # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
         X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
-
-
         ### *** a encoder to model irregular time series
-        # assert not torch.any(torch.isnan(X))
         h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
-        # h = torch.mean(h, dim=-1)
 
         """ Decoder """
         L_pred = time_steps_to_predict.shape[-1]
@@ -4001,7 +5037,7 @@ class BaselineGTrans_WODTDV(MessagePassing):
         self.d_input = d_input
         self.d_k = d_k // n_heads
         self.d_q = d_k // n_heads
-        self.d_e = d_k // n_heads
+        self.d_e = d_input // n_heads
         self.d_sqrt = math.sqrt(d_k // n_heads)
         self.alpha = alpha
         # Attention Layer Initialization
@@ -4029,6 +5065,14 @@ class BaselineGTrans_WODTDV(MessagePassing):
 
         self.layer_norm = nn.LayerNorm(d_input)
 
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)
+        out1 = self.te_scale(tt)
+        out2 = torch.sin(self.te_periodic(tt))
+        return torch.cat([out1, out2], -1)
+        # Normalization
+
+
     def forward(self, x, edge_index, edge_value, time_nodes, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, n_layer):
         residual = x
         x = self.layer_norm(x)
@@ -4051,6 +5095,7 @@ class BaselineGTrans_WODTDV(MessagePassing):
         for i in range(self.n_heads):
             w_k = self.w_k_list[i][n_layer]
             bias_k = self.bias_k_list[i][n_layer]
+            # k_linear_diff = self.w_k_list_diff[i]
             w_q = self.w_q_list[i][n_layer]
             bias_q = self.bias_q_list[i][n_layer]
 
@@ -4069,6 +5114,7 @@ class BaselineGTrans_WODTDV(MessagePassing):
 
             sender_stdv = edge_same_time_diff_var * (torch.matmul(x_j_transfer, w_v[0]) + bias_v[0])
             sender_dtsv = edge_diff_time_same_var * (torch.matmul(x_j_transfer, w_v[1]) + bias_v[1])
+            # sender_dtdv = edge_diff_time_diff_var * (torch.matmul(x_j_transfer, w_v[2]) + bias_v[2])
             sender = sender_stdv + sender_dtsv
             # sender = x_j_transfer
             # sender_diff = (1 - edge) * v_linear_diff(x_j_transfer)
@@ -4085,11 +5131,13 @@ class BaselineGTrans_WODTDV(MessagePassing):
                             edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var):
         x_i_0 = edge_same_time_diff_var * (torch.matmul(x_i, w_q[0]) + bias_q[0]) # receiver #[num_edge,d*heads]
         x_i_1 = edge_diff_time_same_var * (torch.matmul(x_i, w_q[1]) + bias_q[1]) # receiver #[num_edge,d*heads]
+        # x_i_2 = edge_diff_time_diff_var * (torch.matmul(x_i, w_q[2]) + bias_q[2]) # receiver #[num_edge,d*heads]
         x_i = x_i_0 + x_i_1
         # wraping k
 
         sender_0 = edge_same_time_diff_var * (torch.matmul(x_j_transfer, w_k[0]) + bias_k[0])
         sender_1 = edge_diff_time_same_var * (torch.matmul(x_j_transfer, w_k[1]) + bias_k[1])
+        # sender_2 = edge_diff_time_diff_var * (torch.matmul(x_j_transfer, w_k[2]) + bias_k[2])
         sender = sender_0 + sender_1
         # sender_diff = (1 - edge_same) * w_k_diff(x_j_transfer)
         # sender = sender_same + sender_diff  # [num_edge,d]
@@ -4147,9 +5195,6 @@ class BaselineHPG_WODTDV(nn.Module):
             # self.gcs.append(UA_GTrans(1, nodevec_dim + enc_dim + args.te_dim, nodevec_dim + enc_dim + args.te_dim, self.alpha))
             self.gcs.append(BaselineGTrans_WODTDV(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
 
-        # self.w_q = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-        # self.w_k = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-
         self.w_q = nn.Parameter(torch.FloatTensor(d_model, d_model))
         self.w_k = nn.Parameter(torch.FloatTensor(d_model, d_model))
         self.w_v = nn.Parameter(torch.FloatTensor(d_model, d_model))
@@ -4197,13 +5242,17 @@ class BaselineHPG_WODTDV(nn.Module):
             cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
             cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
             cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
-            # cur_x_uncertainty = rearrange(x_uncertainty, 'b n m l -> (b m n l)')
 
             # 生成图结构
             cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
             cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
+            # cur_adj_0 = torch.matmul(cur_mask[:B // 3], cur_mask[:B // 3].permute(0, 1, 3, 2))
+            # cur_adj_1 = torch.matmul(cur_mask[B//3:2*B//3], cur_mask[B//3:2*B//3].permute(0, 1, 3, 2))
+            # cur_adj_2 = torch.matmul(cur_mask[2*B//3:], cur_mask[2*B//3:].permute(0, 1, 3, 2))
+            # cur_adj = torch.cat([cur_adj_0, cur_adj_1, cur_adj_2], dim=0)
 
             int_max = torch.iinfo(torch.int32).max
+            # int_max = 1100000000
             # int_max = 32550000
             element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
 
@@ -4211,7 +5260,7 @@ class BaselineHPG_WODTDV(nn.Module):
                 once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
                 sd = 0
                 ed = once_num
-                total_num = math.ceil(B // once_num) + 1
+                total_num = math.ceil(B / once_num)
                 for k in range(total_num):
                     if k == 0:
                         edge_ind = torch.where(cur_adj[sd:ed] == 1)
@@ -4227,7 +5276,7 @@ class BaselineHPG_WODTDV(nn.Module):
                         edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
                         edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
                     else:
-                        cur_edge_ind = torch.where(cur_adj[sd:ed].unsqueeze(0) == 1)
+                        cur_edge_ind = torch.where(cur_adj[sd:ed] == 1)
                         edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
                         edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
                         edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
@@ -4247,915 +5296,8 @@ class BaselineHPG_WODTDV(nn.Module):
             edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
             edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
 
-            edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == -1).float()
-            edge_self = torch.where((edge_same_time_diff_var + edge_diff_time_same_var) == 2)
-            edge_same_time_diff_var[edge_self] = 0.0
-            # edge_diff_time_same_var[edge_self] = 0.0
-
-            # 图神经网络传播节点状态
-            # cur_x = self.gcs(cur_x, edge_index, edge_time, cur_x_time, edge_same)
-            for gc in self.gcs:
-                cur_x = gc(cur_x, edge_index, edge_time, cur_x_time, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, n_layer)
-            # cur_x = self.base_conv(cur_x, edge_index, edge_time, cur_x_time, edge_same)
-            # x = cur_x.reshape(B, N, M, L, D)
-            x = rearrange(cur_x, '(b m n l) c -> b n m l c', b=B, n=N, m=M, l=L)
-
-            # 池化聚合同一Patch 同一变量的隐藏状态
-            # 若Patch为奇数个，创建一个虚拟节点
-            if M > 1 and M % 2 != 0:
-                x = torch.cat([x, x[:, :, -1, :].unsqueeze(2)], dim=2)
-                mask_X = torch.cat([mask_X, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
-                x_time = torch.cat([x_time, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
-                M = M + 1
-
-            obs_num_per_patch = torch.sum(mask_X, dim=3)  # mask_X.shape[B, N, M, L, 1]
-            x_time_per_patch = torch.sum(x_time, dim=3)  # x_time.shape[B, N, M, L, 1]
-            avg_x_time = x_time_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
-                                                    obs_num_per_patch)
-
-            # avg_x_time = torch.zeros_like(obs_num_per_patch).to(x.device)
-            # avg_x_time[torch.where(obs_num_per_patch == 1)] = torch.max(x_time, dim=3)[0][torch.where(obs_num_per_patch == 1)]
-            # avg_x_time[torch.where(obs_num_per_patch > 1)] = ((torch.max(x_time, dim=3)[0] + torch.min(x_time, dim=3)[0]) / 2)[torch.where(obs_num_per_patch > 1)]
-            # node_state_sum_per_patch = torch.sum(x, dim=3)  # x.shape[B, N, M, L, D]
-
-
-            # x = node_state_sum_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
-            #                                         obs_num_per_patch)
-            avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
-            time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
-            Q = torch.matmul(avg_te, self.w_q)
-            K = torch.matmul(time_te, self.w_k)
-            V = torch.matmul(x, self.w_v)
-            # V = x
-
-
-            # K = torch.matmul(x, self.w_k).view(-1 ,L, D)
-            # Q = F.normalize(Q, p=2, dim=-1)
-            # K = F.normalize(K, p=2, dim=-1)
-            attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
-            # attention = torch.matmul(Q.unsqueeze(-2), K.unsqueeze(-1))
-            attention = torch.div(attention, Q.shape[-1] ** 0.5)
-            attention[torch.where(mask_X == 0)] = -1e10
-            scale_attention = torch.softmax(attention, dim=-2)
-            mask_X = (obs_num_per_patch > 0).float()
-            x = torch.sum((V * scale_attention), dim=-2)
-            # x = torch.sum((V * scale_attention), dim=-2) + avg_te.squeeze(-2)
-
-            x_time = avg_x_time
-            # x_time_emb = self.LearnableTE(x_time)
-            # x = torch.cat([x, x_time_emb], dim=-1)
-            # x_time = torch.sum((x_time.reshape(-1, L, 1) * scale_attention.unsqueeze(-1)), dim=1).reshape(B, N, M, 1)
-
-
-
-
-            if M == 1:
-                return torch.squeeze(x)
-
-
-            x = x.view(B, N, M // 2, 2, D)
-            x_time = x_time.view(B, N, M // 2, 2, 1)
-            mask_X = mask_X.view(B, N, M // 2, 2, 1)
-            # x_uncertainty = x_uncertainty.view(B, N, M // 2, 2)
-
-        return torch.squeeze(x)
-
-    def forecasting(self, time_steps_to_predict, X, truth_time_steps, mask=None):
-    # def forward(self, observed_tp, observed_data, observed_mask, tau, return_almat=False):
-        """
-        X (B, M, L, N)
-        truth_time_steps (B, M, L, N) [0, 1]
-        mask (B, M, L, N)
-
-        To ====>
-        X (B*N*M, L, 1)
-        truth_time_steps (B*N*M, L, 1)
-        mask_X (B*N*M, L, 1)
-        """
-
-        # print("data shape:", time_steps_to_predict.shape, X.shape, truth_time_steps.shape, mask.shape)
-        B, M, L_in, N = X.shape
-        self.batch_size = B
-        X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
-        X = self.obs_enc(X)
-        truth_time_steps = truth_time_steps.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
-        mask = mask.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
-        te_his = self.LearnableTE(truth_time_steps)  # (B, N, M, L, F_te)
-        # print(time.max(), time.mean(), time.min(), time.shape, te.shape)
-        var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
-        # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
-        X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
-
-
-        ### *** a encoder to model irregular time series
-        # assert not torch.any(torch.isnan(X))
-        h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
-        # h = torch.mean(h, dim=-1)
-
-        """ Decoder """
-        L_pred = time_steps_to_predict.shape[-1]
-        h = h.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
-        # print(h.shape, time_steps_to_predict.shape)
-        time_steps_to_predict = time_steps_to_predict.view(B, 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
-        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
-
-        h = torch.cat([h, te_pred], dim=-1)  # (B, N, Lp, F)
-
-        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
-        outputs = self.decoder(h).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
-
-        return outputs  # (1, B, Lp, N)
-
-class BaselineHPG_AddLSTEV(nn.Module):
-    def __init__(self, args, supports=None):
-        super(BaselineHPG_AddLSTEV, self).__init__()
-        d_model = args.hid_dim
-        self.device = args.device
-        self.hid_dim = args.hid_dim
-        self.N = args.ndim
-        # self.M = args.npatch
-        self.batch_size = None
-        self.supports = supports
-        self.n_layer = args.nlayer
-        self.gcs = nn.ModuleList()
-        self.alpha = args.alpha
-        self.res = args.res
-        ### Intra-time series modeling ##
-        ## Time embedding
-        self.te_scale = nn.Linear(1, 1)
-        self.te_periodic = nn.Linear(1, args.hid_dim - 1)
-        self.patch_layer = args.patch_layer
-        self.obs_enc = nn.Linear(1, args.hid_dim)
-
-
-
-        nodevec_dim = args.node_dim
-        self.nodevec_dim = nodevec_dim
-
-        self.nodevec = nn.Parameter(torch.randn(self.N, d_model).cuda(), requires_grad=True)
-        self.relu = nn.ReLU()
-        # self.nodevec = nn.Parameter(torch.FloatTensor(self.N, d_model))
-        # nn.init.xavier_uniform_(self.nodevec)
-
-
-        ### Encoder output layer ###
-        # self.outlayer = args.outlayer
-        enc_dim = args.hid_dim
-
-        for l in range(self.n_layer):
-            # self.gcs.append(UA_GTrans(1, nodevec_dim + enc_dim + args.te_dim, nodevec_dim + enc_dim + args.te_dim, self.alpha))
-            self.gcs.append(BaselineGTrans(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
-
-        # self.w_q = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-        # self.w_k = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-
-        self.w_q = nn.Parameter(torch.FloatTensor(d_model, d_model))
-        self.w_k = nn.Parameter(torch.FloatTensor(d_model, d_model))
-        self.w_v = nn.Parameter(torch.FloatTensor(args.patch_layer, d_model, d_model))
-
-        nn.init.xavier_uniform_(self.w_q)
-        nn.init.xavier_uniform_(self.w_k)
-        nn.init.xavier_uniform_(self.w_v)
-
-        self.decoder = nn.Sequential(
-            nn.Linear(d_model * 2, d_model),
-            nn.ReLU(inplace=True),
-            nn.Linear(d_model, d_model),
-            nn.ReLU(inplace=True),
-            nn.Linear(d_model, 1)
-        )
-
-    def LearnableTE(self, tt):
-        # tt: (N*M*B, L, 1)
-        out1 = self.te_scale(tt)
-        out2 = torch.sin(self.te_periodic(tt))
-        return torch.cat([out1, out2], -1)
-
-    def IMTS_Model(self, x, mask_X, x_time, x_uncertainty):
-        """
-        x (B, N, M, L, F)
-        mask_X (B, N, M, L, 1)
-        x_time (B, N, M, L, 1)
-        """
-        B, N, M, L, D = x.shape
-        layer_nums = int(math.log2(M)) + 1
-
-        # 创建一个形状为 [N] 的张量，包含变量下标
-        variable_indices = torch.arange(N).to(x.device)
-
-        # for i in range(layer_nums + 1):
-        for n_layer in range(self.patch_layer):
-            B, N, M, L, D = x.shape
-
-            # 将其扩展成形状为 [1, N, 1, 1, 1]
-            cur_variable_indices = variable_indices.view(1, N, 1, 1, 1)
-
-            # 利用广播机制，将其扩展成形状为 [B, N, M, L, D]
-            cur_variable_indices = cur_variable_indices.expand(B, N, M, L, 1)
-            # 并行式
-            cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
-            cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
-            cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
-            # cur_x_uncertainty = rearrange(x_uncertainty, 'b n m l -> (b m n l)')
-
-            # 生成图结构
-            cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
-            cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
-
-            int_max = torch.iinfo(torch.int32).max // 2
-            # int_max = 32550000
-            element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
-
-            if element_count > int_max:
-                once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
-                sd = 0
-                ed = once_num
-                total_num = math.ceil(B // once_num) + 1
-                for k in range(total_num):
-                    if k == 0:
-                        edge_ind = torch.where(cur_adj[sd:ed] == 1)
-                        edge_ind_0 = edge_ind[0]
-                        edge_ind_1 = edge_ind[1]
-                        edge_ind_2 = edge_ind[2]
-                        edge_ind_3 = edge_ind[3]
-                    elif k == total_num - 1:
-                        cur_edge_ind = torch.where(cur_adj[sd:] == 1)
-                        edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
-                        edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
-                        edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
-                        edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
-                        edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
-                    else:
-                        cur_edge_ind = torch.where(cur_adj[sd:ed].unsqueeze(0) == 1)
-                        edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
-                        edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
-                        edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
-                        edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
-                    sd += once_num
-                    ed += once_num
-
-            else:
-                edge_ind = torch.where(cur_adj == 1)
-
-            source_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[2])
-            target_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[3])
-            edge_index = torch.cat([source_nodes.unsqueeze(0), target_nodes.unsqueeze(0)])
-
-            edge_time = torch.squeeze(cur_x_time[source_nodes] - cur_x_time[target_nodes])
-
-            edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
-            edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
-
-            edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
-            # edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) > 100).float()
-            edge_self = torch.where((edge_same_time_diff_var + edge_diff_time_same_var) == 2)
-            edge_same_time_diff_var[edge_self] = 0.0
-            # edge_diff_time_same_var[edge_self] = 0.0
-
-            # 图神经网络传播节点状态
-            # cur_x = self.gcs(cur_x, edge_index, edge_time, cur_x_time, edge_same)
-            for gc in self.gcs:
-                cur_x = gc(cur_x, edge_index, edge_time, cur_x_time, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, n_layer)
-            # cur_x = self.base_conv(cur_x, edge_index, edge_time, cur_x_time, edge_same)
-            # x = cur_x.reshape(B, N, M, L, D)
-            x = rearrange(cur_x, '(b m n l) c -> b n m l c', b=B, n=N, m=M, l=L)
-
-            # 池化聚合同一Patch 同一变量的隐藏状态
-            # 若Patch为奇数个，创建一个虚拟节点
-            if M > 1 and M % 2 != 0:
-                x = torch.cat([x, x[:, :, -1, :].unsqueeze(2)], dim=2)
-                mask_X = torch.cat([mask_X, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
-                x_time = torch.cat([x_time, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
-                M = M + 1
-
-            obs_num_per_patch = torch.sum(mask_X, dim=3)  # mask_X.shape[B, N, M, L, 1]
-            x_time_per_patch = torch.sum(x_time, dim=3)  # x_time.shape[B, N, M, L, 1]
-            avg_x_time = x_time_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
-                                                    obs_num_per_patch)
-
-            # avg_x_time = torch.zeros_like(obs_num_per_patch).to(x.device)
-            # avg_x_time[torch.where(obs_num_per_patch == 1)] = torch.max(x_time, dim=3)[0][torch.where(obs_num_per_patch == 1)]
-            # avg_x_time[torch.where(obs_num_per_patch > 1)] = ((torch.max(x_time, dim=3)[0] + torch.min(x_time, dim=3)[0]) / 2)[torch.where(obs_num_per_patch > 1)]
-            # node_state_sum_per_patch = torch.sum(x, dim=3)  # x.shape[B, N, M, L, D]
-
-
-            # x = node_state_sum_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
-            #                                         obs_num_per_patch)
-            avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
-            time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
-            Q = torch.matmul(avg_te, self.w_q)
-            K = torch.matmul(time_te, self.w_k)
-            V = torch.matmul(x, self.w_v[n_layer])
-            # V = x
-
-
-            # K = torch.matmul(x, self.w_k).view(-1 ,L, D)
-            # Q = F.normalize(Q, p=2, dim=-1)
-            # K = F.normalize(K, p=2, dim=-1)
-            attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
-            # attention = torch.matmul(Q.unsqueeze(-2), K.unsqueeze(-1))
-            attention = torch.div(attention, Q.shape[-1] ** 0.5)
-            attention[torch.where(mask_X == 0)] = -1e10
-            scale_attention = torch.softmax(attention, dim=-2)
-            mask_X = (obs_num_per_patch > 0).float()
-            x = torch.sum((V * scale_attention), dim=-2)
-            # x = torch.sum((V * scale_attention), dim=-2) + avg_te.squeeze(-2)
-
-            x_time = avg_x_time
-            # x_time_emb = self.LearnableTE(x_time)
-            # x = torch.cat([x, x_time_emb], dim=-1)
-            # x_time = torch.sum((x_time.reshape(-1, L, 1) * scale_attention.unsqueeze(-1)), dim=1).reshape(B, N, M, 1)
-
-
-
-
-            if M == 1:
-                return torch.squeeze(x)
-
-
-            x = x.view(B, N, M // 2, 2, D)
-            x_time = x_time.view(B, N, M // 2, 2, 1)
-            mask_X = mask_X.view(B, N, M // 2, 2, 1)
-            # x_uncertainty = x_uncertainty.view(B, N, M // 2, 2)
-
-        return torch.squeeze(x)
-
-    def forecasting(self, time_steps_to_predict, X, truth_time_steps, mask=None):
-    # def forward(self, observed_tp, observed_data, observed_mask, tau, return_almat=False):
-        """
-        X (B, M, L, N)
-        truth_time_steps (B, M, L, N) [0, 1]
-        mask (B, M, L, N)
-
-        To ====>
-        X (B*N*M, L, 1)
-        truth_time_steps (B*N*M, L, 1)
-        mask_X (B*N*M, L, 1)
-        """
-
-        # print("data shape:", time_steps_to_predict.shape, X.shape, truth_time_steps.shape, mask.shape)
-        B, M, L_in, N = X.shape
-        self.batch_size = B
-        X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
-        X = self.obs_enc(X)
-        truth_time_steps = truth_time_steps.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
-        mask = mask.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
-        te_his = self.LearnableTE(truth_time_steps)  # (B, N, M, L, F_te)
-        # print(time.max(), time.mean(), time.min(), time.shape, te.shape)
-        var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
-        # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
-        X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
-
-
-        ### *** a encoder to model irregular time series
-        # assert not torch.any(torch.isnan(X))
-        h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
-        # h = torch.mean(h, dim=-1)
-
-        """ Decoder """
-        L_pred = time_steps_to_predict.shape[-1]
-        h = h.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
-        # print(h.shape, time_steps_to_predict.shape)
-        time_steps_to_predict = time_steps_to_predict.view(B, 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
-        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
-
-        h = torch.cat([h, te_pred], dim=-1)  # (B, N, Lp, F)
-
-        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
-        outputs = self.decoder(h).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
-
-        return outputs  # (1, B, Lp, N)
-
-class BaselineHPG_AddLSTEQKV(nn.Module):
-    def __init__(self, args, supports=None):
-        super(BaselineHPG_AddLSTEQKV, self).__init__()
-        d_model = args.hid_dim
-        self.device = args.device
-        self.hid_dim = args.hid_dim
-        self.N = args.ndim
-        # self.M = args.npatch
-        self.batch_size = None
-        self.supports = supports
-        self.n_layer = args.nlayer
-        self.gcs = nn.ModuleList()
-        self.alpha = args.alpha
-        self.res = args.res
-        ### Intra-time series modeling ##
-        ## Time embedding
-        self.te_scale = nn.Linear(1, 1)
-        self.te_periodic = nn.Linear(1, args.hid_dim - 1)
-        self.patch_layer = args.patch_layer
-        self.obs_enc = nn.Linear(1, args.hid_dim)
-
-
-
-        nodevec_dim = args.node_dim
-        self.nodevec_dim = nodevec_dim
-
-        self.nodevec = nn.Parameter(torch.randn(self.N, d_model).cuda(), requires_grad=True)
-        self.relu = nn.ReLU()
-        # self.nodevec = nn.Parameter(torch.FloatTensor(self.N, d_model))
-        # nn.init.xavier_uniform_(self.nodevec)
-
-
-        ### Encoder output layer ###
-        # self.outlayer = args.outlayer
-        enc_dim = args.hid_dim
-
-        for l in range(self.n_layer):
-            # self.gcs.append(UA_GTrans(1, nodevec_dim + enc_dim + args.te_dim, nodevec_dim + enc_dim + args.te_dim, self.alpha))
-            self.gcs.append(BaselineGTrans(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
-
-        # self.w_q = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-        # self.w_k = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-
-        self.w_q = nn.Parameter(torch.FloatTensor(args.patch_layer, d_model, d_model))
-        self.w_k = nn.Parameter(torch.FloatTensor(args.patch_layer, d_model, d_model))
-        self.w_v = nn.Parameter(torch.FloatTensor(args.patch_layer, d_model, d_model))
-
-        nn.init.xavier_uniform_(self.w_q)
-        nn.init.xavier_uniform_(self.w_k)
-        nn.init.xavier_uniform_(self.w_v)
-
-        self.decoder = nn.Sequential(
-            nn.Linear(d_model * 2, d_model),
-            nn.ReLU(inplace=True),
-            nn.Linear(d_model, d_model),
-            nn.ReLU(inplace=True),
-            nn.Linear(d_model, 1)
-        )
-
-    def LearnableTE(self, tt):
-        # tt: (N*M*B, L, 1)
-        out1 = self.te_scale(tt)
-        out2 = torch.sin(self.te_periodic(tt))
-        return torch.cat([out1, out2], -1)
-
-    def IMTS_Model(self, x, mask_X, x_time, x_uncertainty):
-        """
-        x (B, N, M, L, F)
-        mask_X (B, N, M, L, 1)
-        x_time (B, N, M, L, 1)
-        """
-        B, N, M, L, D = x.shape
-        layer_nums = int(math.log2(M)) + 1
-
-        # 创建一个形状为 [N] 的张量，包含变量下标
-        variable_indices = torch.arange(N).to(x.device)
-
-        # for i in range(layer_nums + 1):
-        for n_layer in range(self.patch_layer):
-            B, N, M, L, D = x.shape
-
-            # 将其扩展成形状为 [1, N, 1, 1, 1]
-            cur_variable_indices = variable_indices.view(1, N, 1, 1, 1)
-
-            # 利用广播机制，将其扩展成形状为 [B, N, M, L, D]
-            cur_variable_indices = cur_variable_indices.expand(B, N, M, L, 1)
-            # 并行式
-            cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
-            cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
-            cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
-            # cur_x_uncertainty = rearrange(x_uncertainty, 'b n m l -> (b m n l)')
-
-            # 生成图结构
-            cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
-            cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
-
-            int_max = torch.iinfo(torch.int32).max
-            # int_max = 32550000
-            element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
-
-            if element_count > int_max:
-                once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
-                sd = 0
-                ed = once_num
-                total_num = math.ceil(B // once_num)
-                for k in range(total_num):
-                    if k == 0:
-                        edge_ind = torch.where(cur_adj[sd:ed] == 1)
-                        edge_ind_0 = edge_ind[0]
-                        edge_ind_1 = edge_ind[1]
-                        edge_ind_2 = edge_ind[2]
-                        edge_ind_3 = edge_ind[3]
-                    elif k == total_num - 1:
-                        cur_edge_ind = torch.where(cur_adj[sd:] == 1)
-                        edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
-                        edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
-                        edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
-                        edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
-                        edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
-                    else:
-                        cur_edge_ind = torch.where(cur_adj[sd:ed].unsqueeze(0) == 1)
-                        edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
-                        edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
-                        edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
-                        edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
-                    sd += once_num
-                    ed += once_num
-
-            else:
-                edge_ind = torch.where(cur_adj == 1)
-
-            source_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[2])
-            target_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[3])
-            edge_index = torch.cat([source_nodes.unsqueeze(0), target_nodes.unsqueeze(0)])
-
-            edge_time = torch.squeeze(cur_x_time[source_nodes] - cur_x_time[target_nodes])
-
-            edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
-            edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
-
-            edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
-            # edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) > 100).float()
-            edge_self = torch.where((edge_same_time_diff_var + edge_diff_time_same_var) == 2)
-            edge_same_time_diff_var[edge_self] = 0.0
-            # edge_diff_time_same_var[edge_self] = 0.0
-
-            # 图神经网络传播节点状态
-            # cur_x = self.gcs(cur_x, edge_index, edge_time, cur_x_time, edge_same)
-            for gc in self.gcs:
-                cur_x = gc(cur_x, edge_index, edge_time, cur_x_time, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, n_layer)
-            # cur_x = self.base_conv(cur_x, edge_index, edge_time, cur_x_time, edge_same)
-            # x = cur_x.reshape(B, N, M, L, D)
-            x = rearrange(cur_x, '(b m n l) c -> b n m l c', b=B, n=N, m=M, l=L)
-
-            # 池化聚合同一Patch 同一变量的隐藏状态
-            # 若Patch为奇数个，创建一个虚拟节点
-            if M > 1 and M % 2 != 0:
-                x = torch.cat([x, x[:, :, -1, :].unsqueeze(2)], dim=2)
-                mask_X = torch.cat([mask_X, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
-                x_time = torch.cat([x_time, torch.zeros(size=[B, N, 1, L, 1]).to(x.device)], dim=2)
-                M = M + 1
-
-            obs_num_per_patch = torch.sum(mask_X, dim=3)  # mask_X.shape[B, N, M, L, 1]
-            x_time_per_patch = torch.sum(x_time, dim=3)  # x_time.shape[B, N, M, L, 1]
-            avg_x_time = x_time_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
-                                                    obs_num_per_patch)
-
-            # avg_x_time = torch.zeros_like(obs_num_per_patch).to(x.device)
-            # avg_x_time[torch.where(obs_num_per_patch == 1)] = torch.max(x_time, dim=3)[0][torch.where(obs_num_per_patch == 1)]
-            # avg_x_time[torch.where(obs_num_per_patch > 1)] = ((torch.max(x_time, dim=3)[0] + torch.min(x_time, dim=3)[0]) / 2)[torch.where(obs_num_per_patch > 1)]
-            # node_state_sum_per_patch = torch.sum(x, dim=3)  # x.shape[B, N, M, L, D]
-
-
-            # x = node_state_sum_per_patch / torch.where(obs_num_per_patch == 0, torch.tensor(1, dtype=x.dtype),
-            #                                         obs_num_per_patch)
-            avg_te = self.LearnableTE(avg_x_time).unsqueeze(-2)  # (B, N, M, L, F_te)
-            time_te = self.LearnableTE(x_time)  # (B, N, M, L, F_te)
-            Q = torch.matmul(avg_te, self.w_q[n_layer])
-            K = torch.matmul(time_te, self.w_k[n_layer])
-            V = torch.matmul(x, self.w_v[n_layer])
-            # V = x
-
-
-            # K = torch.matmul(x, self.w_k).view(-1 ,L, D)
-            # Q = F.normalize(Q, p=2, dim=-1)
-            # K = F.normalize(K, p=2, dim=-1)
-            attention = torch.matmul(Q, K.permute(0, 1, 2, 4, 3)).permute(0, 1, 2, 4, 3)
-            # attention = torch.matmul(Q.unsqueeze(-2), K.unsqueeze(-1))
-            attention = torch.div(attention, Q.shape[-1] ** 0.5)
-            attention[torch.where(mask_X == 0)] = -1e10
-            scale_attention = torch.softmax(attention, dim=-2)
-            mask_X = (obs_num_per_patch > 0).float()
-            x = torch.sum((V * scale_attention), dim=-2)
-            # x = torch.sum((V * scale_attention), dim=-2) + avg_te.squeeze(-2)
-
-            x_time = avg_x_time
-            # x_time_emb = self.LearnableTE(x_time)
-            # x = torch.cat([x, x_time_emb], dim=-1)
-            # x_time = torch.sum((x_time.reshape(-1, L, 1) * scale_attention.unsqueeze(-1)), dim=1).reshape(B, N, M, 1)
-
-
-
-
-            if M == 1:
-                return torch.squeeze(x)
-
-
-            x = x.view(B, N, M // 2, 2, D)
-            x_time = x_time.view(B, N, M // 2, 2, 1)
-            mask_X = mask_X.view(B, N, M // 2, 2, 1)
-            # x_uncertainty = x_uncertainty.view(B, N, M // 2, 2)
-
-        return torch.squeeze(x)
-
-    def forecasting(self, time_steps_to_predict, X, truth_time_steps, mask=None):
-    # def forward(self, observed_tp, observed_data, observed_mask, tau, return_almat=False):
-        """
-        X (B, M, L, N)
-        truth_time_steps (B, M, L, N) [0, 1]
-        mask (B, M, L, N)
-
-        To ====>
-        X (B*N*M, L, 1)
-        truth_time_steps (B*N*M, L, 1)
-        mask_X (B*N*M, L, 1)
-        """
-
-        # print("data shape:", time_steps_to_predict.shape, X.shape, truth_time_steps.shape, mask.shape)
-        B, M, L_in, N = X.shape
-        self.batch_size = B
-        X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
-        X = self.obs_enc(X)
-        truth_time_steps = truth_time_steps.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
-        mask = mask.permute(0, 3, 1, 2).unsqueeze(-1)  # (B, N, M, L, 1)
-        te_his = self.LearnableTE(truth_time_steps)  # (B, N, M, L, F_te)
-        # print(time.max(), time.mean(), time.min(), time.shape, te.shape)
-        var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
-        # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
-        X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
-
-
-        ### *** a encoder to model irregular time series
-        # assert not torch.any(torch.isnan(X))
-        h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
-        # h = torch.mean(h, dim=-1)
-
-        """ Decoder """
-        L_pred = time_steps_to_predict.shape[-1]
-        h = h.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
-        # print(h.shape, time_steps_to_predict.shape)
-        time_steps_to_predict = time_steps_to_predict.view(B, 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
-        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
-
-        h = torch.cat([h, te_pred], dim=-1)  # (B, N, Lp, F)
-
-        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
-        outputs = self.decoder(h).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
-
-        return outputs  # (1, B, Lp, N)
-
-class BaselineGTrans_2LayerSpec(MessagePassing):
-
-    def __init__(self, n_heads=2, d_input=6, d_k=6, alpha=0.9, patch_layer=1, res=1, **kwargs):
-        super(BaselineGTrans_2LayerSpec, self).__init__(aggr='add', **kwargs)
-        self.n_heads = n_heads
-        # self.dropout = nn.Dropout(dropout)
-        self.patch_layer = patch_layer
-        self.res = res
-        self.d_input = d_input
-        self.d_k = d_k // n_heads
-        self.d_q = d_k // n_heads
-        self.d_e = d_k // n_heads
-        self.d_sqrt = math.sqrt(d_k // n_heads)
-        self.alpha = alpha
-        # Attention Layer Initialization
-        # self.w_k_list = nn.ModuleList([nn.Linear(self.d_input, self.d_k, bias=True) for i in range(self.n_heads)])
-        self.w_k_list = nn.ParameterList([nn.Parameter(torch.FloatTensor(2, 3, self.d_input, self.d_k)) for i in range(self.n_heads)])
-        self.bias_k_list = nn.ParameterList([nn.Parameter(torch.FloatTensor(2, 3, self.d_k)) for i in range(self.n_heads)])
-        for param in self.w_k_list:
-            nn.init.xavier_uniform_(param)
-        for param in self.bias_k_list:
-            nn.init.uniform_(param)
-
-        self.w_q_list = nn.ParameterList([nn.Parameter(torch.FloatTensor(2, 3, self.d_input, self.d_q)) for i in range(self.n_heads)])
-        self.bias_q_list = nn.ParameterList([nn.Parameter(torch.FloatTensor(2, 3, self.d_q)) for i in range(self.n_heads)])
-        for param in self.w_q_list:
-            nn.init.xavier_uniform_(param)
-        for param in self.bias_q_list:
-            nn.init.uniform_(param)
-
-        self.w_v_list = nn.ParameterList([nn.Parameter(torch.FloatTensor(2, 3, self.d_input, self.d_e)) for i in range(self.n_heads)])
-        self.bias_v_list = nn.ParameterList([nn.Parameter(torch.FloatTensor(2, 3, self.d_e)) for i in range(self.n_heads)])
-        for param in self.w_v_list:
-            nn.init.xavier_uniform_(param)
-        for param in self.bias_v_list:
-            nn.init.xavier_uniform_(param)
-
-        self.layer_norm = nn.LayerNorm(d_input)
-
-    def LearnableTE(self, tt):
-        # tt: (N*M*B, L, 1)
-        out1 = self.te_scale(tt)
-        out2 = torch.sin(self.te_periodic(tt))
-        return torch.cat([out1, out2], -1)
-        # Normalization
-
-
-    def forward(self, x, edge_index, edge_value, time_nodes, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, n_layer):
-        residual = x
-        x = self.layer_norm(x)
-
-        return self.propagate(edge_index, x=x, edges_temporal=edge_value,
-                              edge_same_time_diff_var=edge_same_time_diff_var, edge_diff_time_same_var=edge_diff_time_same_var,
-                              edge_diff_time_diff_var=edge_diff_time_diff_var,
-                              n_layer=n_layer, residual=residual)
-
-    def message(self, x_j, x_i, edge_index_i, edges_temporal, edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var, n_layer):
-        '''
-
-           :param x_j: [num_edge, d] sender
-           :param x_i: [num_edge,d]  receiver
-           :param edge_index_i:  receiver node list [num_edge]
-           :param edges_temporal: [num_edge,d]
-           :return:
-        '''
-        messages = []
-        if n_layer > 0:
-            n_layer = 1
-        for i in range(self.n_heads):
-            w_k = self.w_k_list[i][n_layer]
-            bias_k = self.bias_k_list[i][n_layer]
-            # k_linear_diff = self.w_k_list_diff[i]
-            w_q = self.w_q_list[i][n_layer]
-            bias_q = self.bias_q_list[i][n_layer]
-
-            w_v = self.w_v_list[i][n_layer]
-            bias_v = self.bias_v_list[i][n_layer]
-
-
-            x_j_transfer = x_j
-
-            attention = self.each_head_attention(x_j_transfer, w_k, bias_k, w_q, bias_q, x_i,
-                                                 edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var)  # [4,1]
-            attention = torch.div(attention, self.d_sqrt)
-            attention = torch.pow(self.alpha, torch.abs(edges_temporal.squeeze())).unsqueeze(-1) * attention
-            # attention = attention * edge_same_time_diff_var + attention * edge_diff_time_same_var + attention * edge_diff_time_diff_var * 0.1
-            attention_norm = softmax(attention, edge_index_i)
-
-            sender_stdv = edge_same_time_diff_var * (torch.matmul(x_j_transfer, w_v[0]) + bias_v[0])
-            sender_dtsv = edge_diff_time_same_var * (torch.matmul(x_j_transfer, w_v[1]) + bias_v[1])
-            sender_dtdv = edge_diff_time_diff_var * (torch.matmul(x_j_transfer, w_v[2]) + bias_v[2])
-            sender = sender_stdv + sender_dtsv + sender_dtdv
-            # sender = x_j_transfer
-            # sender_diff = (1 - edge) * v_linear_diff(x_j_transfer)
-            # sender = sender
-
-            message = attention_norm * sender  # [4,3]
-            messages.append(message)
-
-        message_all_head = torch.cat(messages, 1)
-
-        return message_all_head
-
-    def each_head_attention(self, x_j_transfer, w_k, bias_k, w_q, bias_q, x_i,
-                            edge_same_time_diff_var, edge_diff_time_same_var, edge_diff_time_diff_var):
-        x_i_0 = edge_same_time_diff_var * (torch.matmul(x_i, w_q[0]) + bias_q[0]) # receiver #[num_edge,d*heads]
-        x_i_1 = edge_diff_time_same_var * (torch.matmul(x_i, w_q[1]) + bias_q[1]) # receiver #[num_edge,d*heads]
-        x_i_2 = edge_diff_time_diff_var * (torch.matmul(x_i, w_q[2]) + bias_q[2]) # receiver #[num_edge,d*heads]
-        x_i = x_i_0 + x_i_1 + x_i_2
-        # wraping k
-
-        sender_0 = edge_same_time_diff_var * (torch.matmul(x_j_transfer, w_k[0]) + bias_k[0])
-        sender_1 = edge_diff_time_same_var * (torch.matmul(x_j_transfer, w_k[1]) + bias_k[1])
-        sender_2 = edge_diff_time_diff_var * (torch.matmul(x_j_transfer, w_k[2]) + bias_k[2])
-        sender = sender_0 + sender_1 + sender_2
-        # sender_diff = (1 - edge_same) * w_k_diff(x_j_transfer)
-        # sender = sender_same + sender_diff  # [num_edge,d]
-
-        # Calculate attention score
-        attention = torch.bmm(torch.unsqueeze(sender, 1), torch.unsqueeze(x_i, 2))
-
-        return torch.squeeze(attention, 1)
-
-    def update(self, aggr_out, residual):
-        x_new = self.res * residual + F.gelu(aggr_out)
-        return x_new
-        # return self.dropout(x_new)
-
-    def __repr__(self):
-        return '{}'.format(self.__class__.__name__)
-
-class BaselineHPG_2LayerSpec(nn.Module):
-    def __init__(self, args, supports=None):
-        super(BaselineHPG_2LayerSpec, self).__init__()
-        d_model = args.hid_dim
-        self.device = args.device
-        self.hid_dim = args.hid_dim
-        self.N = args.ndim
-        # self.M = args.npatch
-        self.batch_size = None
-        self.supports = supports
-        self.n_layer = args.nlayer
-        self.gcs = nn.ModuleList()
-        self.alpha = args.alpha
-        self.res = args.res
-        ### Intra-time series modeling ##
-        ## Time embedding
-        self.te_scale = nn.Linear(1, 1)
-        self.te_periodic = nn.Linear(1, args.hid_dim - 1)
-        self.patch_layer = args.patch_layer
-        self.obs_enc = nn.Linear(1, args.hid_dim)
-
-
-
-        nodevec_dim = args.node_dim
-        self.nodevec_dim = nodevec_dim
-
-        self.nodevec = nn.Parameter(torch.randn(self.N, d_model).cuda(), requires_grad=True)
-        self.relu = nn.ReLU()
-        # self.nodevec = nn.Parameter(torch.FloatTensor(self.N, d_model))
-        # nn.init.xavier_uniform_(self.nodevec)
-
-
-        ### Encoder output layer ###
-        # self.outlayer = args.outlayer
-        enc_dim = args.hid_dim
-
-        for l in range(self.n_layer):
-            # self.gcs.append(UA_GTrans(1, nodevec_dim + enc_dim + args.te_dim, nodevec_dim + enc_dim + args.te_dim, self.alpha))
-            self.gcs.append(BaselineGTrans_2LayerSpec(args.nhead, d_model, d_model, self.alpha, args.patch_layer, self.res))
-
-        # self.w_q = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-        # self.w_k = nn.Parameter(torch.FloatTensor(args.te_dim, nodevec_dim + enc_dim + args.te_dim))
-
-        self.w_q = nn.Parameter(torch.FloatTensor(d_model, d_model))
-        self.w_k = nn.Parameter(torch.FloatTensor(d_model, d_model))
-        self.w_v = nn.Parameter(torch.FloatTensor(d_model, d_model))
-
-        nn.init.xavier_uniform_(self.w_q)
-        nn.init.xavier_uniform_(self.w_k)
-        nn.init.xavier_uniform_(self.w_v)
-
-        self.decoder = nn.Sequential(
-            nn.Linear(d_model * 2, d_model),
-            nn.ReLU(inplace=True),
-            nn.Linear(d_model, d_model),
-            nn.ReLU(inplace=True),
-            nn.Linear(d_model, 1)
-        )
-
-    def LearnableTE(self, tt):
-        # tt: (N*M*B, L, 1)
-        out1 = self.te_scale(tt)
-        out2 = torch.sin(self.te_periodic(tt))
-        return torch.cat([out1, out2], -1)
-
-    def IMTS_Model(self, x, mask_X, x_time, x_uncertainty):
-        """
-        x (B, N, M, L, F)
-        mask_X (B, N, M, L, 1)
-        x_time (B, N, M, L, 1)
-        """
-        B, N, M, L, D = x.shape
-        layer_nums = int(math.log2(M)) + 1
-
-        # 创建一个形状为 [N] 的张量，包含变量下标
-        variable_indices = torch.arange(N).to(x.device)
-
-        # for i in range(layer_nums + 1):
-        for n_layer in range(self.patch_layer):
-            B, N, M, L, D = x.shape
-
-            # 将其扩展成形状为 [1, N, 1, 1, 1]
-            cur_variable_indices = variable_indices.view(1, N, 1, 1, 1)
-
-            # 利用广播机制，将其扩展成形状为 [B, N, M, L, D]
-            cur_variable_indices = cur_variable_indices.expand(B, N, M, L, 1)
-            # 并行式
-            cur_x = rearrange(x, 'b n m l c -> (b m n l) c')
-            cur_variable_indices = rearrange(cur_variable_indices, 'b n m l c -> (b m n l) c')
-            cur_x_time = rearrange(x_time, 'b n m l c -> (b m n l) c')
-            # cur_x_uncertainty = rearrange(x_uncertainty, 'b n m l -> (b m n l)')
-
-            # 生成图结构
-            cur_mask = rearrange(mask_X, 'b n m l c -> b m (n l) c')
-            cur_adj = torch.matmul(cur_mask, cur_mask.permute(0, 1, 3, 2))
-
-            int_max = torch.iinfo(torch.int32).max // 2
-            # int_max = 32550000
-            element_count = cur_adj.shape[0] * cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3]
-
-            if element_count > int_max:
-                once_num = int_max // (cur_adj.shape[1] * cur_adj.shape[2] * cur_adj.shape[3])
-                sd = 0
-                ed = once_num
-                total_num = math.ceil(B // once_num) + 1
-                for k in range(total_num):
-                    if k == 0:
-                        edge_ind = torch.where(cur_adj[sd:ed] == 1)
-                        edge_ind_0 = edge_ind[0]
-                        edge_ind_1 = edge_ind[1]
-                        edge_ind_2 = edge_ind[2]
-                        edge_ind_3 = edge_ind[3]
-                    elif k == total_num - 1:
-                        cur_edge_ind = torch.where(cur_adj[sd:] == 1)
-                        edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
-                        edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
-                        edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
-                        edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
-                        edge_ind = (edge_ind_0, edge_ind_1, edge_ind_2, edge_ind_3)
-                    else:
-                        cur_edge_ind = torch.where(cur_adj[sd:ed].unsqueeze(0) == 1)
-                        edge_ind_0 = torch.cat([edge_ind_0, cur_edge_ind[0] + k * once_num])
-                        edge_ind_1 = torch.cat([edge_ind_1, cur_edge_ind[1]])
-                        edge_ind_2 = torch.cat([edge_ind_2, cur_edge_ind[2]])
-                        edge_ind_3 = torch.cat([edge_ind_3, cur_edge_ind[3]])
-                    sd += once_num
-                    ed += once_num
-
-            else:
-                edge_ind = torch.where(cur_adj == 1)
-
-            source_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[2])
-            target_nodes = (N * M * L * edge_ind[0] + N * L * edge_ind[1] + edge_ind[3])
-            edge_index = torch.cat([source_nodes.unsqueeze(0), target_nodes.unsqueeze(0)])
-
-            edge_time = torch.squeeze(cur_x_time[source_nodes] - cur_x_time[target_nodes])
-
-            edge_diff_time_same_var = ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
-            edge_same_time_diff_var= ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
+            # edge_same_time_diff_var= ((cur_variable_indices[source_nodes] - cur_variable_indices[target_nodes]) == 0).float()
+            # edge_diff_time_same_var = ((cur_x_time[source_nodes] - cur_x_time[target_nodes]) == 0).float()
 
             edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) == 0).float()
             # edge_diff_time_diff_var = ((edge_same_time_diff_var + edge_diff_time_same_var) > 100).float()
@@ -5213,13 +5355,6 @@ class BaselineHPG_2LayerSpec(nn.Module):
             # x = torch.sum((V * scale_attention), dim=-2) + avg_te.squeeze(-2)
 
             x_time = avg_x_time
-            # x_time_emb = self.LearnableTE(x_time)
-            # x = torch.cat([x, x_time_emb], dim=-1)
-            # x_time = torch.sum((x_time.reshape(-1, L, 1) * scale_attention.unsqueeze(-1)), dim=1).reshape(B, N, M, 1)
-
-
-
-
             if M == 1:
                 return torch.squeeze(x)
 
@@ -5244,7 +5379,6 @@ class BaselineHPG_2LayerSpec(nn.Module):
         mask_X (B*N*M, L, 1)
         """
 
-        # print("data shape:", time_steps_to_predict.shape, X.shape, truth_time_steps.shape, mask.shape)
         B, M, L_in, N = X.shape
         self.batch_size = B
         X = X.permute(0, 3, 1, 2).unsqueeze(-1)  # (B*N*M, L, 1)
@@ -5256,12 +5390,8 @@ class BaselineHPG_2LayerSpec(nn.Module):
         var_emb = self.nodevec.view(1, N, 1, 1, self.hid_dim).repeat(B, 1, M, L_in, 1)
         # X = (X + var_emb + te_his) * mask  # (B*N*M, L, F)
         X = self.relu(X + var_emb + te_his)  # (B*N*M, L, F)
-
-
         ### *** a encoder to model irregular time series
-        # assert not torch.any(torch.isnan(X))
         h = self.IMTS_Model(X, mask, truth_time_steps, None)  # (B, N, hid_dim)
-        # h = torch.mean(h, dim=-1)
 
         """ Decoder """
         L_pred = time_steps_to_predict.shape[-1]
@@ -5276,6 +5406,7 @@ class BaselineHPG_2LayerSpec(nn.Module):
         outputs = self.decoder(h).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
 
         return outputs  # (1, B, Lp, N)
+
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 

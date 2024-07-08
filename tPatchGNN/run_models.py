@@ -123,6 +123,8 @@ if __name__ == '__main__':
 	args.ndim = input_dim
 	args.npatch = int(math.ceil((args.history - args.patch_size) / args.stride)) + 1
 	args.patch_layer = layer_of_patches(args.npatch)
+	args.scale_patch_size = args.patch_size / (args.history + args.pred_window)
+
 	# model = tPatchGNN(args).to(args.device)
 	# model = HPG_WOGraph(args).to(args.device)
 	# model = HPG(args).to(args.device)
@@ -132,7 +134,13 @@ if __name__ == '__main__':
 	# model = BaselineHPG_Fixed_ReLUEnc(args).to(args.device)
 
 	# model = BaselineHPG_AddLSTEQKV(args).to(args.device)
-	model = BaselineHPG(args).to(args.device)
+	# model = BaselineHPG(args).to(args.device)
+	model = BaselineHPG_v2(args).to(args.device)
+	# model = BaselineHPG_v2_1Layer(args).to(args.device)
+	# model = BaselineHPG_v2_AddLayer1(args).to(args.device)
+
+	# model = BaselineHPG_LastRef(args).to(args.device)
+	# model = BaselineHPG_WOLayerSpecParam(args).to(args.device)
 	# model = BaselineHPG_2LayerSpec(args).to(args.device)
 	# model = BaselineHPG_AddLSTEV(args).to(args.device)
 	# model = BaselineHPG_WOTEAGG(args).to(args.device)
