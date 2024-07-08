@@ -123,13 +123,31 @@ if __name__ == '__main__':
 	args.patch_layer = layer_of_patches(args.npatch)
 
 	if args.dataset == 'activity':
-		args.seq_len = 130
+		if args.history == 3000:
+			args.seq_len = 98
+		elif args.history == 2000:
+			args.seq_len = 65
+		elif args.history == 1000:
+			args.seq_len = 34
+
 	elif args.dataset == 'physionet':
-		args.seq_len = 216
-	elif args.dataset == 'physionet':
-		args.seq_len = 643
-	elif args.dataset == 'USHCN':
-		args.seq_len = 214
+		if args.history == 24:
+			args.seq_len = 128
+		elif args.history == 12:
+			args.seq_len = 83
+		elif args.history == 36:
+			args.seq_len = 175
+
+	elif args.dataset == 'mimic':
+		if args.history == 24:
+			args.seq_len = 280
+		elif args.history == 12:
+			args.seq_len = 133
+		elif args.history == 36:
+			args.seq_len = 464
+
+	elif args.dataset == 'ushcn':
+		args.seq_len = 205
 
 
 	if args.model == 'iTransformer':
@@ -214,21 +232,24 @@ if __name__ == '__main__':
 	test_res = None
 	for itr in range(args.epoch):
 		st = time.time()
-
+		# max_len = 0
 		### Training ###
 		model.train()
 		for _ in range(num_batches):
 			optimizer.zero_grad()
 			batch_dict = utils.get_next_batch(data_obj["train_dataloader"])
+
+			# max_len = batch_dict['observed_tp'].shape[-1] if batch_dict['observed_tp'].shape[-1] > max_len else max_len
 			# print(batch_dict["tp_to_predict"].shape, batch_dict["observed_data"].shape, \
 		 	# 	batch_dict["observed_tp"].shape, batch_dict["observed_mask"].shape)
 			train_res = compute_all_losses(model, batch_dict)
 			train_res["loss"].backward()
 			optimizer.step()
-
+		# print(args.dataset + ' ' + str(args.history) + ' max_len_1:', max_len)
 		### Validation ###
 		model.eval()
 		with torch.no_grad():
+
 			val_res = evaluation(model, data_obj["val_dataloader"], data_obj["n_val_batches"])
 			
 			### Testing ###

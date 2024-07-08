@@ -328,8 +328,7 @@ def compute_all_losses(model, batch_dict):
 	# Condition on subsampled points
 	# Make predictions for all the points
 	# shape of pred --- [n_traj_samples=1, n_batch, n_tp, n_dim]
-
-	pred_y = model.forecasting(batch_dict["tp_to_predict"], 
+	pred_y = model.forecasting(batch_dict["tp_to_predict"],
 		batch_dict["observed_data"], batch_dict["observed_tp"], 
 		batch_dict["observed_mask"]) 
 	# print("pred:", pred_y.shape, batch_dict["mask_predicted_data"].shape)
@@ -363,11 +362,12 @@ def evaluation(model, dataloader, n_batches):
 	total_results["mae"] = 0
 	total_results["rmse"] = 0
 	total_results["mape"] = 0
-
+	# max_len = 0
 	for _ in range(n_batches):
 		batch_dict = utils.get_next_batch(dataloader)
 		# bs = batch_dict["observed_data"].shape[0]
 		# print(batch_dict["observed_data"].shape)
+		# max_len = batch_dict['observed_tp'].shape[-1] if batch_dict['observed_tp'].shape[-1] > max_len else max_len
 
 		pred_y = model.forecasting(batch_dict["tp_to_predict"], 
 			batch_dict["observed_data"], batch_dict["observed_tp"], 
@@ -390,6 +390,7 @@ def evaluation(model, dataloader, n_batches):
 		total_results["mape"] += ape_var_sum
 		n_eval_samples += mask_count
 		n_eval_samples_mape += mask_count_mape
+	# print(' max_len_23:', max_len)
 
 	# print(n_eval_samples)
 	n_avai_var = torch.count_nonzero(n_eval_samples)

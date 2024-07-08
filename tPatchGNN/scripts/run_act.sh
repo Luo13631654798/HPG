@@ -29,7 +29,7 @@ do
     --dataset activity --state def --history 3000 \
     --patience 10 --batch_size 32 --lr 1e-3 \
     --patch_size 200 --stride 200 --nhead 1 --tf_layer 1 --nlayer 3 \
-    --hid_dim 64 \
+    --hid_dim 8 \
     --outlayer Linear --seed $seed --gpu $gpu --alpha 1
 done
 
