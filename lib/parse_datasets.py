@@ -214,13 +214,13 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 		test_data = Activity_time_chunk(test_data, args, device)
 		batch_size = args.batch_size
 
-		max_len = 0
-		for tup in train_data:
-			max_len = len(tup[1]) if (len(tup[1]) > max_len) else max_len
-		for tup in val_data:
-			max_len = len(tup[1]) if (len(tup[1]) > max_len) else max_len
-		for tup in test_data:
-			max_len = len(tup[1]) if (len(tup[1]) > max_len) else max_len
+		# max_len = 0
+		# for tup in train_data:
+		# 	max_len = len(tup[1]) if (len(tup[1]) > max_len) else max_len
+		# for tup in val_data:
+		# 	max_len = len(tup[1]) if (len(tup[1]) > max_len) else max_len
+		# for tup in test_data:
+		# 	max_len = len(tup[1]) if (len(tup[1]) > max_len) else max_len
 
 		print("Dataset n_samples after time split:", len(train_data)+len(val_data)+len(test_data),\
 			len(train_data), len(val_data), len(test_data))
