@@ -176,7 +176,8 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 	##################################################################
 	### Activity dataset ###
 	elif dataset_name == "activity":
-		args.pred_window = 4000 - args.history # predict future 1000 ms
+		# args.pred_window = 4000 - args.history # predict future 1000 ms
+		args.pred_window = 1000 # 还是改回预测1000ms
 
 		total_dataset = PersonActivity('../data/activity/', n_samples = args.n, download=True, device = device)
 
