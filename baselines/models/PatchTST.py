@@ -67,61 +67,34 @@ class Model(nn.Module):
         # Prediction Head
         self.head_nf = configs.d_model * \
                        int((configs.seq_len - patch_len) / stride + 2)
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            self.head = FlattenHead(configs.enc_in, self.head_nf, configs.pred_len,
+        self.head = FlattenHead(configs.enc_in, self.head_nf, configs.pred_len,
                                     head_dropout=configs.dropout)
-        elif self.task_name == 'imputation' or self.task_name == 'anomaly_detection':
-            self.head = FlattenHead(configs.enc_in, self.head_nf, configs.seq_len,
-                                    head_dropout=configs.dropout)
-        elif self.task_name == 'classification':
-            self.flatten = nn.Flatten(start_dim=-2)
-            self.dropout = nn.Dropout(configs.dropout)
-            self.projection = nn.Linear(
-                self.head_nf * configs.enc_in, configs.num_class)
 
-    def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)，输入时间序列
+        out1 = self.te_scale(tt) # 时间嵌入的缩放
+        out2 = torch.sin(self.te_periodic(tt)) # 时间嵌入的周期性部分
+        return torch.cat([out1, out2], -1) # 将缩放和周期性部分拼接
+
+    def forecasting(self, tp_to_predict, observed_data, observed_tp, observed_mask):
+        # tp_to_predict, observed_data, observed_tp, observed_mask
+        # self, x_enc, x_mark_enc, x_dec, x_mark_dec
         # Normalization from Non-stationary Transformer
-        means = x_enc.mean(1, keepdim=True).detach()
-        x_enc = x_enc - means
+        means = observed_data.mean(1, keepdim=True).detach()
+        x_enc = observed_data - means
         stdev = torch.sqrt(
             torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
         x_enc /= stdev
 
-        # do patching and embedding
-        x_enc = x_enc.permute(0, 2, 1)
-        # u: [bs * nvars x patch_num x d_model]
-        enc_out, n_vars = self.patch_embedding(x_enc)
+        # add the content
+        _, _, N = x_enc.shape
+        ### add the content ###
+        padding_len = self.seq_len - x_enc.shape[1]
+        padding = torch.zeros(size=[x_enc.shape[0], padding_len, x_enc.shape[2]]).to(observed_data.device)
+        x_enc = torch.cat([x_enc, padding], dim=1)
+        padding_t = torch.zeros(size=[x_enc.shape[0], padding_len]).to(observed_data.device)
+        observed_tp = torch.cat([observed_tp, padding_t], dim=1)
 
-        # Encoder
-        # z: [bs * nvars x patch_num x d_model]
-        enc_out, attns = self.encoder(enc_out)
-        # z: [bs x nvars x patch_num x d_model]
-        enc_out = torch.reshape(
-            enc_out, (-1, n_vars, enc_out.shape[-2], enc_out.shape[-1]))
-        # z: [bs x nvars x d_model x patch_num]
-        enc_out = enc_out.permute(0, 1, 3, 2)
-
-        # Decoder
-        dec_out = self.head(enc_out)  # z: [bs x nvars x target_window]
-        dec_out = dec_out.permute(0, 2, 1)
-
-        # De-Normalization from Non-stationary Transformer
-        dec_out = dec_out * \
-                  (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
-        dec_out = dec_out + \
-                  (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
-        return dec_out
-
-    def imputation(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask):
-        # Normalization from Non-stationary Transformer
-        means = torch.sum(x_enc, dim=1) / torch.sum(mask == 1, dim=1)
-        means = means.unsqueeze(1).detach()
-        x_enc = x_enc - means
-        x_enc = x_enc.masked_fill(mask == 0, 0)
-        stdev = torch.sqrt(torch.sum(x_enc * x_enc, dim=1) /
-                           torch.sum(mask == 1, dim=1) + 1e-5)
-        stdev = stdev.unsqueeze(1).detach()
-        x_enc /= stdev
 
         # do patching and embedding
         x_enc = x_enc.permute(0, 2, 1)
@@ -137,91 +110,22 @@ class Model(nn.Module):
         # z: [bs x nvars x d_model x patch_num]
         enc_out = enc_out.permute(0, 1, 3, 2)
 
-        # Decoder
-        dec_out = self.head(enc_out)  # z: [bs x nvars x target_window]
-        dec_out = dec_out.permute(0, 2, 1)
+        # 改Decoder
+        L_pred = tp_to_predict.shape[-1]
+        enc_out = enc_out.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
+        # print(h.shape, time_steps_to_predict.shape)
+        time_steps_to_predict = tp_to_predict.view(x_enc.shape[0], 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
+        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
 
-        # De-Normalization from Non-stationary Transformer
-        dec_out = dec_out * \
-                  (stdev[:, 0, :].unsqueeze(1).repeat(1, self.seq_len, 1))
-        dec_out = dec_out + \
-                  (means[:, 0, :].unsqueeze(1).repeat(1, self.seq_len, 1))
-        return dec_out
+        enc_out = torch.cat([enc_out, te_pred], dim=-1)  # (B, N, Lp, F)
 
-    def anomaly_detection(self, x_enc):
-        # Normalization from Non-stationary Transformer
-        means = x_enc.mean(1, keepdim=True).detach()
-        x_enc = x_enc - means
-        stdev = torch.sqrt(
-            torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
-        x_enc /= stdev
+        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
+        outputs = self.decoder(enc_out).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
 
-        # do patching and embedding
-        x_enc = x_enc.permute(0, 2, 1)
-        # u: [bs * nvars x patch_num x d_model]
-        enc_out, n_vars = self.patch_embedding(x_enc)
+        return outputs
 
-        # Encoder
-        # z: [bs * nvars x patch_num x d_model]
-        enc_out, attns = self.encoder(enc_out)
-        # z: [bs x nvars x patch_num x d_model]
-        enc_out = torch.reshape(
-            enc_out, (-1, n_vars, enc_out.shape[-2], enc_out.shape[-1]))
-        # z: [bs x nvars x d_model x patch_num]
-        enc_out = enc_out.permute(0, 1, 3, 2)
-
-        # Decoder
-        dec_out = self.head(enc_out)  # z: [bs x nvars x target_window]
-        dec_out = dec_out.permute(0, 2, 1)
-
-        # De-Normalization from Non-stationary Transformer
-        dec_out = dec_out * \
-                  (stdev[:, 0, :].unsqueeze(1).repeat(1, self.seq_len, 1))
-        dec_out = dec_out + \
-                  (means[:, 0, :].unsqueeze(1).repeat(1, self.seq_len, 1))
-        return dec_out
-
-    def classification(self, x_enc, x_mark_enc):
-        # Normalization from Non-stationary Transformer
-        means = x_enc.mean(1, keepdim=True).detach()
-        x_enc = x_enc - means
-        stdev = torch.sqrt(
-            torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
-        x_enc /= stdev
-
-        # do patching and embedding
-        x_enc = x_enc.permute(0, 2, 1)
-        # u: [bs * nvars x patch_num x d_model]
-        enc_out, n_vars = self.patch_embedding(x_enc)
-
-        # Encoder
-        # z: [bs * nvars x patch_num x d_model]
-        enc_out, attns = self.encoder(enc_out)
-        # z: [bs x nvars x patch_num x d_model]
-        enc_out = torch.reshape(
-            enc_out, (-1, n_vars, enc_out.shape[-2], enc_out.shape[-1]))
-        # z: [bs x nvars x d_model x patch_num]
-        enc_out = enc_out.permute(0, 1, 3, 2)
-
-        # Decoder
-        output = self.flatten(enc_out)
-        output = self.dropout(output)
-        output = output.reshape(output.shape[0], -1)
-        output = self.projection(output)  # (batch_size, num_classes)
-        return output
-
-    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
-            return dec_out[:, -self.pred_len:, :]  # [B, L, D]
-        if self.task_name == 'imputation':
-            dec_out = self.imputation(
-                x_enc, x_mark_enc, x_dec, x_mark_dec, mask)
-            return dec_out  # [B, L, D]
-        if self.task_name == 'anomaly_detection':
-            dec_out = self.anomaly_detection(x_enc)
-            return dec_out  # [B, L, D]
-        if self.task_name == 'classification':
-            dec_out = self.classification(x_enc, x_mark_enc)
-            return dec_out  # [B, N]
-        return None
+    
+    # def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
+    #    if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
+    #        dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
+    #        return dec_out[:, -self.pred_len:, :]  # [B, L, D]

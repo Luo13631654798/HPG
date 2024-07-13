@@ -60,7 +60,9 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 			collate_fn = variable_time_collate_fn_CRU
 		elif(args.model == "latent_ode"):
 			collate_fn = variable_time_collate_fn_ODE
-		elif(args.model == "iTransformer"):
+		elif(args.model == "iTransformer" or args.model == "TimesNet" or args.model == "DLinear"
+	   		or args.model == "PatchTST" or args.model == "Pathformer" or args.model == "TimeMixer"
+	   		or args.model == "MSGNet" or args.model == "MICN"):
 			# [B, T, V]
 			collate_fn = variable_time_collate_fn
 
@@ -132,7 +134,9 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 			collate_fn = USHCN_variable_time_collate_fn_CRU
 		elif(args.model == "latent_ode"):
 			collate_fn = USHCN_variable_time_collate_fn_ODE
-		elif(args.model == "iTransformer"):
+		elif(args.model == "iTransformer" or args.model == "TimesNet" or args.model == "DLinear"
+	   		or args.model == "PatchTST" or args.model == "Pathformer" or args.model == "TimeMixer"
+	   		or args.model == "MSGNet" or args.model == "MICN"):
 			collate_fn = USHCN_variable_time_collate_fn
 
 		train_data = USHCN_time_chunk(train_data, args, device)
@@ -207,7 +211,9 @@ def parse_datasets(args, patch_ts=False, length_stat=False):
 			collate_fn = variable_time_collate_fn_CRU
 		elif(args.model == "latent_ode"):
 			collate_fn = variable_time_collate_fn_ODE
-		elif (args.model == "iTransformer") :
+		elif (args.model == "iTransformer" or args.model == "TimesNet" or args.model == "DLinear"
+	   		or args.model == "PatchTST" or args.model == "Pathformer" or args.model == "TimeMixer"
+	   		or args.model == "MSGNet" or args.model == "MICN") :
 			collate_fn = variable_time_collate_fn
 
 		train_data = Activity_time_chunk(train_data, args, device)

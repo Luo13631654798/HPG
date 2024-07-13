@@ -86,44 +86,88 @@ class Model(nn.Module):
                                            configs.dropout)
         self.layer = configs.e_layers
         self.layer_norm = nn.LayerNorm(configs.d_model)
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            self.predict_linear = nn.Linear(
+        self.predict_linear = nn.Linear(
                 self.seq_len, self.pred_len + self.seq_len)
-            self.projection = nn.Linear(
-                configs.d_model, configs.c_out, bias=True)
-        if self.task_name == 'imputation' or self.task_name == 'anomaly_detection':
-            self.projection = nn.Linear(
-                configs.d_model, configs.c_out, bias=True)
-        if self.task_name == 'classification':
-            self.act = F.gelu
-            self.dropout = nn.Dropout(configs.dropout)
-            self.projection = nn.Linear(
-                configs.d_model * configs.seq_len, configs.num_class)
+        self.te_scale = nn.Linear(1, 1)
+        self.te_periodic = nn.Linear(1, configs.d_model - 1)
 
-    def forecasting(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(configs.d_model * 2, configs.d_model), # 线性层
+            nn.ReLU(inplace=True), # 激活函数relu
+            nn.Linear(configs.d_model, configs.d_model), # 线性层
+            nn.ReLU(inplace=True), # 激活函数relu
+            nn.Linear(configs.d_model, 1) # 线性层
+        )
+    
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)
+        out1 = self.te_scale(tt)
+        out2 = torch.sin(self.te_periodic(tt))
+        return torch.cat([out1, out2], -1)
+
+    def forecasting(self, tp_to_predict, observed_data, observed_tp, observed_mask):
         # Normalization from Non-stationary Transformer
-        means = x_enc.mean(1, keepdim=True).detach()
-        x_enc = x_enc - means
+        # self, tp_to_predict, observed_data, observed_tp, observed_mask
+        # tp_to_predict: 要预测的时刻 [B, L_Pred]
+        # observed_data: 观测值 [B, T, V]
+        # observed_mask: 掩码 [B, T, V] 一般不用
+        # observed_tp: 观测时刻 [B, T, 1]
+
+        # forcast改名为forcasting
+        # 参数名统一
+        # 去Time Series Library找原始输入格式 跟这里的参数对应
+        # Normalization from Non-stationary Transformer
+        #  [B T V]
+        means = observed_data.mean(1, keepdim=True).detach()
+        x_enc = observed_data - means
         stdev = torch.sqrt(
             torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
         x_enc /= stdev
 
-        # embedding
-        enc_out = self.enc_embedding(x_enc, x_mark_enc)  # [B,T,C]
+        _, _, N = x_enc.shape
+        print(f"x_enc11 shape: {x_enc.shape}, observed_tp shape: {observed_tp.shape}") # [32 96 12]  [32 96]
+        ### add the content ###
+        padding_len = self.seq_len - x_enc.shape[1]
+        padding = torch.zeros(size=[x_enc.shape[0], padding_len, x_enc.shape[2]]).to(observed_data.device)
+        x_enc = torch.cat([x_enc, padding], dim=1)
+        print(f"x_enc22 shape: {x_enc.shape}, observed_tp shape: {observed_tp.shape}") # [32 98 12]  [32 96]
+        padding_t = torch.zeros(size=[x_enc.shape[0], padding_len]).to(observed_data.device)
+        observed_tp = torch.cat([observed_tp, padding_t], dim=1)
+
+        # 确认传递给模型的输入形状
+        # 32是batch 98是seq_len  12是ndim
+        # x_enc 32 98 12   observed_tp 32 98
+        print(f"x_enc shape: {x_enc.shape}, observed_tp shape: {observed_tp.shape}") # [32 98 12]  [32 98]
+
+        # embedding 主要问题
+        enc_out = self.enc_embedding(x_enc, observed_tp.unsqueeze(-1))  # [B,T,C]
+        print(f"enc_out shape: {enc_out.shape}")
         enc_out = self.predict_linear(enc_out.permute(0, 2, 1)).permute(
             0, 2, 1)  # align temporal dimension
         # TimesNet
         for i in range(self.layer):
             enc_out = self.layer_norm(self.model[i](enc_out))
-        # porject back
-        # dec_out = self.projection(enc_out)
-        #
-        # # De-Normalization from Non-stationary Transformer
-        # dec_out = dec_out * \
-        #           (stdev[:, 0, :].unsqueeze(1).repeat(
-        #               1, self.pred_len + self.seq_len, 1))
-        # dec_out = dec_out + \
-        #           (means[:, 0, :].unsqueeze(1).repeat(
-        #               1, self.pred_len + self.seq_len, 1))
-        return dec_out
 
+        enc_out = enc_out[:, :-1]
+        # batchsize 变量数 d_model
+        # 改Decoder
+        L_pred = tp_to_predict.shape[-1]
+        enc_out = enc_out.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
+        # print(h.shape, time_steps_to_predict.shape)
+        time_steps_to_predict = tp_to_predict.view(x_enc.shape[0], 1, L_pred, 1).repeat(1, N, 1, 1)  # (B, N, Lp, 1)
+        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
+
+        enc_out = torch.cat([enc_out, te_pred], dim=-1)  # (B, N, Lp, F)
+
+        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
+        outputs = self.decoder(enc_out).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
+        # De-Normalization from Non-stationary Transformer
+        outputs = outputs * \
+                  (stdev[:, 0, :].unsqueeze(1).repeat(
+                      1, self.pred_len + self.seq_len, 1))
+        outputs = outputs + \
+                  (means[:, 0, :].unsqueeze(1).repeat(
+                      1, self.pred_len + self.seq_len, 1))
+        return outputs
+        #return outputs

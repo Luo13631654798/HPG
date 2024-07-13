@@ -1,7 +1,9 @@
 import os
 import sys
 sys.path.append("../..")
-
+# os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+import torch
+print(torch.cuda.is_available())
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot
@@ -23,7 +25,7 @@ parser.add_argument('-n',  type=int, default=int(1e8), help="Size of the dataset
 
 parser.add_argument('--epoch', type=int, default=1000, help="training epoches")
 parser.add_argument('--patience', type=int, default=10, help="patience for early stop")
-parser.add_argument('--history', type=int, default=24, help="number of hours (months for ushcn and ms for activity) as historical window")
+parser.add_argument('--history', type=int, default=3000, help="number of hours (months for ushcn and ms for activity) as historical window")
 
 parser.add_argument('--logmode', type=str, default="a", help='File mode of logging.')
 
@@ -57,6 +59,10 @@ parser.add_argument('--alpha', type=float, default=0.9, help="Uncertainty base n
 parser.add_argument('--res', type=float, default=1, help="Res")
 parser.add_argument('--gpu', type=str, default='0', help='which gpu to use.')
 
+# add seq_len,top_k,nums_of_kernels
+parser.add_argument('--seq_len', type=int, default=96, help="Sequence length for the model")
+parser.add_argument('--top_k', type=int, default=5, help='Top K value for TimesNet')
+parser.add_argument('--num_kernels', type=int, default=64, help='Number of kernels for TimesNet')
 
 args = parser.parse_args()
 args.npatch = int(np.ceil((args.history - args.patch_size) / args.stride)) + 1 # (window size for a patch)
@@ -150,7 +156,7 @@ if __name__ == '__main__':
 		args.seq_len = 205
 
 
-	if args.model == 'iTransformer':
+	if args.model == 'iTransformer': # add iTransformer
 		args.task_name = 'long_term_forecast'
 		args.pred_len =  720
 		args.output_attention = None
@@ -163,6 +169,153 @@ if __name__ == '__main__':
 		args.e_layers = 4
 		args.n_heads = 1
 		args.activation = 'gelu'
+
+	elif args.model == 'DLinear': # add DLinear
+		args.task_name = 'long_term_forecast'
+		args.moving_avg = 25 # moving_avg in Autoformer
+		args.pred_len =  720 # pred_len
+		# args.output_attention = None 
+		args.individual = False
+		# args.features = 'M'
+		# args.label_len = 48
+		# args.e_layers = 2
+		# args.d_layers = 1
+		# args.factor = 3
+		args.enc_in = 321 # enc_in
+		# args.dec_in = 321 
+		args.c_out = 321
+
+	elif args.model == 'TimesNet':
+		args.task_name = 'long_term_forecast' # task_name
+		args.pred_len =  720 # pred_len
+		# args.seq_len = 96
+		# args.features = 'M'
+		args.label_len = 48 # label_len
+		# args.output_attention = None
+		args.d_model = 64 # d_model
+		args.embed = 'timeF' # embed
+		args.freq = 'm' # freq
+		args.dropout = 0.1 # dropout
+		# args.factor = 3
+		args.d_ff = 64 # d_ff
+		args.num_kernels = 6 # nums_kernels
+		args.e_layers = 2 # e_layers
+		# args.d_layers = 1
+		#### change
+		args.enc_in = 12 # enc_in change
+		# args.dec_in = 8
+		args.c_out = 8 # c_out
+		# args.n_heads = 1
+		args.top_k = 5 # top_k
+	
+	elif args.model == 'PatchTST':
+		args.task_name = 'long_term_forecast'  # task_name
+		# args.is_training = 1  
+		args.label_len = 48  # label_len
+		args.pred_len = 96  # pred_len
+		args.patch_len = 16 # patch_len
+		args.stride = 8 # stride
+		args.d_model = 64 # d_model
+		args.dropout = 0.1 # drop_out
+		args.output_attention = None # output_attention
+		args.n_heads = 1 # n_head
+		args.d_ff = 64 # d_ff
+		args.activation = 'gelu' # activation
+		args.e_layers = 2  # e_layers
+		# args.d_layers = 1  # d_layers
+		args.factor = 3  # factor
+		args.enc_in = 321  # enc_in
+		# args.dec_in = 321  # dec_in
+		# args.c_out = 321  # c_out
+
+	elif args.model == 'Pathformer':
+		args.task_name = 'long_term_forecast'  # task_name
+		args.layer_nums = 3
+		args.pred_len = 96  # pred_len
+		args.num_nodes = 321
+		args.pre_len = 96
+		args.k = 2
+		args.d_model = 16
+		args.d_ff = 64
+		args.residual_connection = 1
+		args.revin = 1
+		args.num_experts_list = [4, 4, 4]
+		args.patch_size_list = [16,12,8,32,12,8,6,4,8,6,4,2]
+
+	elif args.model == 'TimeMixer':
+		args.task_name = 'long_term_forecast' 
+		# args.seq_len = 96  
+		args.label_len = 48
+		args.pred_len = 96 
+		args.e_layers = 2  
+		args.moving_avg = 25
+		args.enc_in = 7
+		# args.dec_in = 321  # dec_in
+		args.c_out = 7
+		args.d_model = 16  
+		args.embed = 'timeF'
+		args.freq = 'h'
+		args.dropout = 0.1
+		args.d_ff = 32  
+		args.down_sampling_layers = 0 
+		args.down_sampling_method = 'avg'  
+		args.down_sampling_window = 1 
+		args.channel_independence = 1
+		args.use_norm = 1
+	
+	elif args.model == 'MSGNet':
+		args.task_name = 'long_term_forecast' 
+		args.freq = 'h' # freq
+		args.seasonal_patterns = 'Monthly' 
+		args.seq_len = 96 # seq_len
+		args.label_len = 48  # label
+		args.pred_len = 96  # pred_len
+		args.e_layers = 2 # e_layers
+		args.enc_in = 7 # enc_in
+		args.c_out = 7 # c_out
+		args.d_model = 512 # d_model
+		args.d_ff = 64 # d_ff
+		args.n_heads = 8 # head
+		args.dropout = 0.1 # dropout
+		args.top_k = 5 # top_k
+		args.nums_kernels = 6 # nums_kernels
+		args.conv_channel = 32 # conv_channel
+		args.skip_channel = 32 # skip
+		args.gcn_depth = 2 # 
+		args.propalpha = 0.3 #
+		args.node_dim = 10 # 
+		args.gcn_depth = 2
+		args.gcn_dropout = 0.3
+		args.embed = 'timeF' # 
+		args.individual = False # individual
+		args.num_nodes = 7
+		args.subgraph_size = 3
+		args.tanhalpha = 3
+	elif args.model == 'MICN':
+		args.task_name = 'long_term_forecast'  # task_name
+		# args.is_training = 1  # is_training
+		# args.root_path = './dataset/electricity/'  # root_path
+		# args.data_path = 'electricity.csv'  # data_path
+		# args.model_id = 'ECL_96_96'  # model_id
+		# args.data = 'custom'  # data
+		args.features = 'M'  # features
+		args.seq_len = 96  # seq_len
+		args.label_len = 96  # label_len
+		args.pred_len = 96  # pred_len
+		args.e_layers = 2  # e_layers
+		args.d_layers = 1  # d_layers
+		args.factor = 3  # factor
+		args.enc_in = 321  # enc_in
+		args.dec_in = 321  # dec_in
+		args.c_out = 321  # c_out
+		args.d_model = 256  # d_model
+		args.d_ff = 512  # d_ff
+		args.top_k = 5  # top_k
+		args.des = 'Exp'  # des
+		args.itr = 1  # itr
+		args.conv_kernel = 24
+		
+	
 
 	model_dict = {
 		# 'TimesNet': TimesNet.Model({  'seq_len': 96 ,
@@ -178,14 +331,16 @@ if __name__ == '__main__':
 		# 					  'd_ff': 32 ,
 		# 					  'top_k': 5 ,
 		# }),
-		'DLinear': DLinear,
-		'PatchTST': PatchTST,
-		'MICN': MICN,
-		'iTransformer': iTransformer.Model(args),
-		'MambaSimple': MambaSimple,
-		'TimeMixer': TimeMixer,
-		'Pathformer': Pathformer,
-		'MSGNet': MSGNet,
+		# 'TimesNet': TimesNet.Model(args),
+		# 'DLinear': DLinear.Model(args),
+		# 'PatchTST': PatchTST.Model(args),
+		'TimesNet': TimesNet.Model(args),
+		# 'TimesNet': TimesNet.Model(args),
+		# 'MambaSimple': MambaSimple.Model(args),
+		# 'TimeMixer': TimeMixer.Model(args),
+		# 'Pathformer': Pathformer.Model(args),
+		# 'MSGNet': MSGNet.Model(args),
+		# 'MICN': MICN.Model(args),
 	}
 	# model = Pathformer(args).to(args.device)
 	# model = BaselineHPG(args).to(args.device)

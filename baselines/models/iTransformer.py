@@ -14,10 +14,10 @@ class Model(nn.Module):
 
     def __init__(self, configs):
         super(Model, self).__init__()
-        self.task_name = configs.task_name
-        self.seq_len = configs.seq_len
-        self.pred_len = configs.pred_len
-        self.output_attention = configs.output_attention
+        self.task_name = configs.task_name # 设置任务
+        self.seq_len = configs.seq_len # 输入序列长度
+        self.pred_len = configs.pred_len # 预测序列长度
+        self.output_attention = configs.output_attention # 输出注意力权重
         # Embedding
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
                                                     configs.dropout)
@@ -33,26 +33,27 @@ class Model(nn.Module):
                     dropout=configs.dropout,
                     activation=configs.activation
                 ) for l in range(configs.e_layers)
-            ],
-            norm_layer=torch.nn.LayerNorm(configs.d_model)
+            ], # 根据配置文件创建多个 EncoderLayer 层
+            norm_layer=torch.nn.LayerNorm(configs.d_model) # 使用 LayerNorm 进行归一化
         )
 
-        self.te_scale = nn.Linear(1, 1)
-        self.te_periodic = nn.Linear(1, configs.d_model - 1)
+        self.te_scale = nn.Linear(1, 1) # 线性层，用于时间嵌入的缩放
+        self.te_periodic = nn.Linear(1, configs.d_model - 1) # 线性层，用于时间嵌入的周期性部分
+
 
         # Decoder
         self.decoder = nn.Sequential(
-            nn.Linear(configs.d_model * 2, configs.d_model),
-            nn.ReLU(inplace=True),
-            nn.Linear(configs.d_model, configs.d_model),
-            nn.ReLU(inplace=True),
-            nn.Linear(configs.d_model, 1)
+            nn.Linear(configs.d_model * 2, configs.d_model), # 线性层
+            nn.ReLU(inplace=True), # relu激活函数
+            nn.Linear(configs.d_model, configs.d_model), # 线性层
+            nn.ReLU(inplace=True), # relu激活函数
+            nn.Linear(configs.d_model, 1) # 线性层，输出为1
         )
     def LearnableTE(self, tt):
-        # tt: (N*M*B, L, 1)
-        out1 = self.te_scale(tt)
-        out2 = torch.sin(self.te_periodic(tt))
-        return torch.cat([out1, out2], -1)
+        # tt: (N*M*B, L, 1)，输入时间序列
+        out1 = self.te_scale(tt) # 时间嵌入的缩放
+        out2 = torch.sin(self.te_periodic(tt)) # 时间嵌入的周期性部分
+        return torch.cat([out1, out2], -1) # 将缩放和周期性部分拼接
 
     def forecasting(self, tp_to_predict, observed_data, observed_tp, observed_mask):
         # tp_to_predict: 要预测的时刻 [B, L_Pred]
@@ -71,15 +72,20 @@ class Model(nn.Module):
         x_enc /= stdev
 
         _, _, N = x_enc.shape
-
+        ### add the content ###
         padding_len = self.seq_len - x_enc.shape[1]
         padding = torch.zeros(size=[x_enc.shape[0], padding_len, x_enc.shape[2]]).to(observed_data.device)
         x_enc = torch.cat([x_enc, padding], dim=1)
         padding_t = torch.zeros(size=[x_enc.shape[0], padding_len]).to(observed_data.device)
         observed_tp = torch.cat([observed_tp, padding_t], dim=1)
 
+        # x_enc shape: (32 98 12)  observed_tp shape: 32 98 其实就是batch size, seq_len, end_in (B T V)
+        print(f"x_enc shape: {x_enc.shape}, observed_tp shape: {observed_tp.shape}")
+
         # Embedding
         enc_out = self.enc_embedding(x_enc, observed_tp.unsqueeze(-1))
+        # enc_out shape: [32 13 512]
+        print(f"enc_out shape: {enc_out.shape}")
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
         enc_out = enc_out[:, :-1] # 保证Shape: [B， V， d_model维]
 

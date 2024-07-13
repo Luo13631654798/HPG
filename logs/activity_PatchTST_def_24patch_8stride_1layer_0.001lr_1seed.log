@@ -1,0 +1,4 @@
+/home/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-13 16:53:34
+./tPatchGNN/run_baselines.py
+Namespace(state='def', n=100000000, epoch=1000, patience=10, history=3000, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='activity', quantization=0.0, model='PatchTST', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=8, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=98, top_k=5, num_kernels=64, npatch=125, device=device(type='cuda', index=0), PID=3738679, pred_window=1000, ndim=12, patch_layer=8, task_name='long_term_forecast', label_len=48, pred_len=96, patch_len=16, d_model=64, dropout=0.1, output_attention=None, n_heads=1, d_ff=64, activation='gelu', e_layers=2, factor=3, enc_in=321)

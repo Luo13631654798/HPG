@@ -168,42 +168,6 @@ class Model(nn.Module):
         dec_out = dec_out[:, -self.pred_len:, :] + trend[:, -self.pred_len:, :]
         return dec_out
 
-    def imputation(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask):
-        # Multi-scale Hybrid Decomposition
-        seasonal_init_enc, trend = self.decomp_multi(x_enc)
-
-        # embedding
-        dec_out = self.dec_embedding(seasonal_init_enc, x_mark_dec)
-        dec_out = self.conv_trans(dec_out)
-        dec_out = dec_out + trend
-        return dec_out
-
-    def anomaly_detection(self, x_enc):
-        # Multi-scale Hybrid Decomposition
-        seasonal_init_enc, trend = self.decomp_multi(x_enc)
-
-        # embedding
-        dec_out = self.dec_embedding(seasonal_init_enc, None)
-        dec_out = self.conv_trans(dec_out)
-        dec_out = dec_out + trend
-        return dec_out
-
-    def classification(self, x_enc, x_mark_enc):
-        # Multi-scale Hybrid Decomposition
-        seasonal_init_enc, trend = self.decomp_multi(x_enc)
-        # embedding
-        dec_out = self.dec_embedding(seasonal_init_enc, None)
-        dec_out = self.conv_trans(dec_out)
-        dec_out = dec_out + trend
-
-        # Output from Non-stationary Transformer
-        output = self.act(dec_out)  # the output transformer encoder/decoder embeddings don't include non-linearity
-        output = self.dropout(output)
-        output = output * x_mark_enc.unsqueeze(-1)  # zero-out padding embeddings
-        output = output.reshape(output.shape[0], -1)  # (batch_size, seq_length * d_model)
-        output = self.projection(output)  # (batch_size, num_classes)
-        return output
-
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
