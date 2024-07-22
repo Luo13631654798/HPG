@@ -208,8 +208,40 @@ class Model(nn.Module):
                                                       configs.dropout)
 
         self.layer = configs.e_layers
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            self.predict_layers = torch.nn.ModuleList(
+
+        self.normalize_layers = torch.nn.ModuleList(
+            [
+                Normalize(self.configs.enc_in, affine=True, non_norm=True if configs.use_norm == 0 else False)
+                for i in range(configs.down_sampling_layers + 1)
+            ]
+        )
+
+        self.predict_layers = torch.nn.ModuleList(
+            [
+                    torch.nn.Linear(
+                        configs.seq_len // (configs.down_sampling_window ** i),
+                        configs.pred_len,
+                    )
+                    for i in range(configs.down_sampling_layers + 1)
+            ]
+        )
+
+        if self.channel_independence == 1:
+            self.projection_layer = nn.Linear(
+                configs.d_model, 1, bias=True)
+        else:
+            self.projection_layer = nn.Linear(
+                configs.d_model, configs.c_out, bias=True)
+
+            self.out_res_layers = torch.nn.ModuleList([
+                torch.nn.Linear(
+                    configs.seq_len // (configs.down_sampling_window ** i),
+                    configs.seq_len // (configs.down_sampling_window ** i),
+                )
+                for i in range(configs.down_sampling_layers + 1)
+            ])
+
+            self.regression_layers = torch.nn.ModuleList(
                 [
                     torch.nn.Linear(
                         configs.seq_len // (configs.down_sampling_window ** i),
@@ -219,38 +251,8 @@ class Model(nn.Module):
                 ]
             )
 
-            if self.channel_independence == 1:
-                self.projection_layer = nn.Linear(
-                    configs.d_model, 1, bias=True)
-            else:
-                self.projection_layer = nn.Linear(
-                    configs.d_model, configs.c_out, bias=True)
-
-                self.out_res_layers = torch.nn.ModuleList([
-                    torch.nn.Linear(
-                        configs.seq_len // (configs.down_sampling_window ** i),
-                        configs.seq_len // (configs.down_sampling_window ** i),
-                    )
-                    for i in range(configs.down_sampling_layers + 1)
-                ])
-
-                self.regression_layers = torch.nn.ModuleList(
-                    [
-                        torch.nn.Linear(
-                            configs.seq_len // (configs.down_sampling_window ** i),
-                            configs.pred_len,
-                        )
-                        for i in range(configs.down_sampling_layers + 1)
-                    ]
-                )
-
-            self.normalize_layers = torch.nn.ModuleList(
-                [
-                    Normalize(self.configs.enc_in, affine=True, non_norm=True if configs.use_norm == 0 else False)
-                    for i in range(configs.down_sampling_layers + 1)
-                ]
-            )
-
+        
+    '''
     def out_projection(self, dec_out, i, out_res):
         dec_out = self.projection_layer(dec_out)
         out_res = out_res.permute(0, 2, 1)
@@ -258,7 +260,7 @@ class Model(nn.Module):
         out_res = self.regression_layers[i](out_res).permute(0, 2, 1)
         dec_out = dec_out + out_res
         return dec_out
-
+    '''
     def pre_enc(self, x_list):
         if self.channel_independence == 1:
             return (x_list, None)
@@ -311,8 +313,10 @@ class Model(nn.Module):
 
         return x_enc, x_mark_enc
 
-    def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
-
+    def forecasting(self, tp_to_predict, observed_data, observed_tp, observed_mask):
+        # self, tp_to_predict, observed_data, observed_tp, observed_mask
+        # self, x_enc, x_mark_enc, x_dec, x_mark_dec
+        
         x_enc, x_mark_enc = self.__multi_scale_process_inputs(x_enc, x_mark_enc)
 
         x_list = []

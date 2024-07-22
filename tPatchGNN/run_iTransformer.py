@@ -30,7 +30,7 @@ parser.add_argument('-n',  type=int, default=int(1e8), help="Size of the dataset
 
 parser.add_argument('--epoch', type=int, default=100, help="training epoches")
 parser.add_argument('--patience', type=int, default=10, help="patience for early stop")
-parser.add_argument('--history', type=int, default=3000, help="number of hours (months for ushcn and ms for activity) as historical window")
+parser.add_argument('--history', type=int, default=24, help="number of hours (months for ushcn and ms for activity) as historical window")
 
 parser.add_argument('--logmode', type=str, default="a", help='File mode of logging.')
 
@@ -42,12 +42,12 @@ parser.add_argument('--viz', action='store_true', help="Show plots while trainin
 parser.add_argument('--save', type=str, default='experiments/', help="Path for save checkpoints")
 parser.add_argument('--load', type=str, default=None, help="ID of the experiment to load for evaluation. If None, run a new experiment.")
 parser.add_argument('--seed', type=int, default=1, help="Random seed")
-parser.add_argument('--dataset', type=str, default='activity', help="Dataset to load. Available: physionet, mimic, ushcn")
+parser.add_argument('--dataset', type=str, default='ushcn', help="Dataset to load. Available: physionet, mimic, ushcn")
 
 # value 0 means using original time granularity, Value 1 means quantization by 1 hour, 
 # value 0.1 means quantization by 0.1 hour = 6 min, value 0.016 means quantization by 0.016 hour = 1 min
 parser.add_argument('--quantization', type=float, default=0.0, help="Quantization on the physionet dataset.")
-parser.add_argument('--model', type=str, default='MSGNet', help="[iTransformer, ...... ]")
+parser.add_argument('--model', type=str, default='iTransformer', help="[iTransformer, ...... ]")
 parser.add_argument('--outlayer', type=str, default='Linear', help="Model name")
 parser.add_argument('--patch_ts', type=bool, default=False)
 
@@ -135,52 +135,31 @@ if __name__ == '__main__':
 
 	if args.dataset == 'activity':
 		if args.history == 3000:
-			args.seq_len = 98 
-			args.patch_size_list = [49,14,7,2]
-			args.num_experts_list = [4,4,4]
+			args.seq_len = 98
 		elif args.history == 2000:
 			args.seq_len = 65
-			args.patch_size_list = [13,5]
-			args.num_experts_list = [2,2,2]
 		elif args.history == 1000:
 			args.seq_len = 34
-			args.patch_size_list = [17,2]
-			args.num_experts_list = [2,2,2]
 
 	elif args.dataset == 'physionet':
 		if args.history == 24:
 			args.seq_len = 128
-			# args.patch_size_list = [64,32,16,8,4,2]
-			args.patch_size_list = [64,32,16]
-			args.num_experts_list = [3,3,3]
 		elif args.history == 12:
 			args.seq_len = 83
-			args.patch_size_list = [83,1]
-			args.num_experts_list = [2,2,2]
 		elif args.history == 36:
 			args.seq_len = 175
-			args.patch_size_list = [35,25,7]
-			args.num_experts_list = [3,3,3]
-			# args.patch_size_list = [35,25,7,5]
+
 	elif args.dataset == 'mimic':
 		if args.history == 24:
 			args.seq_len = 280
-			args.patch_size_list = [140,70,56,40]
-			args.num_experts_list = [4,4,4]
-			# [140,70,56,40,35,28,10,8,7,5,4,2]
 		elif args.history == 12:
 			args.seq_len = 133
-			args.patch_size_list = [19,7]
-			args.num_experts_list = [2,2,2]
 		elif args.history == 36:
 			args.seq_len = 464
-			args.patch_size_list = [232,116,58]
-			args.num_experts_list = [3,3,3]
-			# [232,116,58,8,29,16,4,2]
+
 	elif args.dataset == 'ushcn':
 		args.seq_len = 205
-		args.patch_size_list = [41,5]
-		args.num_experts_list = [2,2,2]
+
 
 	if args.model == 'iTransformer': # add iTransformer
 		args.task_name = 'long_term_forecast'
@@ -195,7 +174,6 @@ if __name__ == '__main__':
 		args.e_layers = 4
 		args.n_heads = 1
 		args.activation = 'gelu'
-		model = iTransformer.Model(args).to(args.device)
 
 	elif args.model == 'DLinear': # add DLinear
 		args.task_name = 'long_term_forecast'
@@ -211,7 +189,6 @@ if __name__ == '__main__':
 		args.enc_in = 321 # enc_in
 		# args.dec_in = 321 
 		args.c_out = 321
-		model = DLinear.Model(args).to(args.device)
 
 	elif args.model == 'TimesNet':
 		args.task_name = 'long_term_forecast' # task_name
@@ -235,7 +212,6 @@ if __name__ == '__main__':
 		args.c_out = 8 # c_out
 		# args.n_heads = 1
 		args.top_k = 5 # top_k
-		model = TimesNet.Model(args).to(args.device)
 	
 	elif args.model == 'PatchTST':
 		args.task_name = 'long_term_forecast'  # task_name
@@ -256,23 +232,20 @@ if __name__ == '__main__':
 		args.enc_in = 321  # enc_in
 		# args.dec_in = 321  # dec_in
 		# args.c_out = 321  # c_out
-		model = PatchTST.Model(args).to(args.device)
 
 	elif args.model == 'Pathformer':
 		args.task_name = 'long_term_forecast'  # task_name
 		args.layer_nums = 3
-		args.pred_len = 98  # pred_len
-		args.num_nodes = input_dim
-		args.pre_len = 98
+		args.pred_len = 96  # pred_len
+		args.num_nodes = 321
+		args.pre_len = 96
 		args.k = 2
 		args.d_model = 16
 		args.d_ff = 64
 		args.residual_connection = 1
 		args.revin = 1
-		# args.num_experts_list = [4,4,4,4]
-		# args.patch_size_list = [16,12,8,32,12,8,6,4,8,6,4,2]
-		# args.patch_size_list = [16,12,8,32,12,8,6,4,8,6,4,2]
-		model = Pathformer.Model(args).to(args.device)
+		args.num_experts_list = [4, 4, 4]
+		args.patch_size_list = [16,12,8,32,12,8,6,4,8,6,4,2]
 
 	elif args.model == 'TimeMixer':
 		args.task_name = 'long_term_forecast' 
@@ -294,18 +267,17 @@ if __name__ == '__main__':
 		args.down_sampling_window = 1 
 		args.channel_independence = 1
 		args.use_norm = 1
-		model = TimeMixer.Model(args).to(args.device)
 	
 	elif args.model == 'MSGNet':
 		args.task_name = 'long_term_forecast' 
 		args.freq = 'h' # freq
 		args.seasonal_patterns = 'Monthly' 
-		# args.seq_len = 96 # seq_len
+		args.seq_len = 96 # seq_len
 		args.label_len = 48  # label
 		args.pred_len = 96  # pred_len
 		args.e_layers = 2 # e_layers
-		args.enc_in = input_dim # enc_in，变量数
-		args.c_out = input_dim # c_out
+		args.enc_in = 7 # enc_in
+		args.c_out = 7 # c_out
 		args.d_model = 512 # d_model
 		args.d_ff = 64 # d_ff
 		args.n_heads = 8 # head
@@ -324,8 +296,6 @@ if __name__ == '__main__':
 		args.num_nodes = 7
 		args.subgraph_size = 3
 		args.tanhalpha = 3
-		model = MSGNet.Model(args).to(args.device)
-
 	elif args.model == 'MICN':
 		args.task_name = 'long_term_forecast'  # task_name
 		# args.is_training = 1  # is_training
@@ -349,10 +319,9 @@ if __name__ == '__main__':
 		args.des = 'Exp'  # des
 		args.itr = 1  # itr
 		args.conv_kernel = 24
-		model = MICN.Model(args).to(args.device)
 		
 	
-	'''
+
 	model_dict = {
 		# 'TimesNet': TimesNet.Model({  'seq_len': 96 ,
 		# 					  'label_len': 48 ,
@@ -369,8 +338,7 @@ if __name__ == '__main__':
 		# }),
 		# 'TimesNet': TimesNet.Model(args),
 		# 'DLinear': DLinear.Model(args),
-		# 'iTransformer': iTransformer.Model(args),
-		# 'iTransformer': iTransformer.Model(args),
+	    'iTransformer': iTransformer.Model(args),
 		# 'TimesNet': TimesNet.Model(args),
 		# 'MambaSimple': MambaSimple.Model(args),
 		# 'TimeMixer': TimeMixer.Model(args),
@@ -379,11 +347,9 @@ if __name__ == '__main__':
 		# 'MSGNet': MSGNet.Model(args),
 		# 'MICN': MICN.Model(args),
 	}
-	'''
-	
 	# model = Pathformer(args).to(args.device)
 	# model = BaselineHPG(args).to(args.device)
-	# model = model_dict[args.model].to(args.device)
+	model = model_dict[args.model].to(args.device)
 
 
 	params = (list(model.parameters()))

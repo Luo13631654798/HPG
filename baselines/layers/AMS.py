@@ -6,7 +6,7 @@ from ..utils.Other import SparseDispatcher, FourierLayer, series_decomp_multi, M
 
 class AMS(nn.Module):
     def __init__(self, input_size, output_size, num_experts, device, num_nodes=1, d_model=32, d_ff=64, dynamic=False,
-                 patch_size=[8, 6, 4, 2], noisy_gating=True, k=4, layer_number=1, residual_connection=1):
+                 patch_size_list=[8, 6, 4, 2], noisy_gating=True, k=4, layer_number=1, residual_connection=1):
         super(AMS, self).__init__()
         self.num_experts = num_experts
         self.output_size = output_size
@@ -19,7 +19,7 @@ class AMS(nn.Module):
 
         self.experts = nn.ModuleList()
         self.MLPs = nn.ModuleList()
-        for patch in patch_size:
+        for patch in patch_size_list:
             patch_nums = int(input_size / patch)
             self.experts.append(Transformer_Layer(device=device, d_model=d_model, d_ff=d_ff,
                                       dynamic=dynamic, num_nodes=num_nodes, patch_nums=patch_nums,
@@ -58,8 +58,10 @@ class AMS(nn.Module):
         threshold_positions_if_out = threshold_positions_if_in - 1
         threshold_if_out = torch.unsqueeze(torch.gather(top_values_flat, 0, threshold_positions_if_out), 1)
         normal = Normal(self.mean, self.std)
-        prob_if_in = normal.cdf((clean_values - threshold_if_in) / noise_stddev)
-        prob_if_out = normal.cdf((clean_values - threshold_if_out) / noise_stddev)
+        # noise_stddev += 1e-8
+        eps = 1e-10
+        prob_if_in = normal.cdf((clean_values - threshold_if_in) / (noise_stddev+eps))
+        prob_if_out = normal.cdf((clean_values - threshold_if_out) / (noise_stddev+eps))
         prob = torch.where(is_in, prob_if_in, prob_if_out)
         return prob
 
@@ -112,3 +114,4 @@ class AMS(nn.Module):
         if self.residual_connection:
             output = output + x
         return output, balance_loss
+    

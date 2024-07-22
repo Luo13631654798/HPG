@@ -65,10 +65,24 @@ class Model(nn.Module):
         )
 
         # Prediction Head
-        self.head_nf = configs.d_model * \
-                       int((configs.seq_len - patch_len) / stride + 2)
-        self.head = FlattenHead(configs.enc_in, self.head_nf, configs.pred_len,
-                                    head_dropout=configs.dropout)
+        # self.head_nf = configs.d_model * \
+                       # int((configs.seq_len - patch_len) / stride + 2)
+        # self.head = FlattenHead(configs.enc_in, self.head_nf, configs.pred_len,
+                                    # head_dropout=configs.dropout)
+        
+        # decoder start
+        self.te_scale = nn.Linear(1, 1) # 线性层，用于时间嵌入的缩放
+        self.te_periodic = nn.Linear(1, configs.d_model - 1) # 线性层，用于时间嵌入的周期性部分
+
+
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(configs.d_model * 2, configs.d_model), # 线性层
+            nn.ReLU(inplace=True), # relu激活函数
+            nn.Linear(configs.d_model, configs.d_model), # 线性层
+            nn.ReLU(inplace=True), # relu激活函数
+            nn.Linear(configs.d_model, 1) # 线性层，输出为1
+        )
 
     def LearnableTE(self, tt):
         # tt: (N*M*B, L, 1)，输入时间序列
@@ -80,21 +94,32 @@ class Model(nn.Module):
         # tp_to_predict, observed_data, observed_tp, observed_mask
         # self, x_enc, x_mark_enc, x_dec, x_mark_dec
         # Normalization from Non-stationary Transformer
+        '''
         means = observed_data.mean(1, keepdim=True).detach()
         x_enc = observed_data - means
         stdev = torch.sqrt(
             torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
         x_enc /= stdev
+        '''
+        x_enc = observed_data
 
         # add the content
         _, _, N = x_enc.shape
         ### add the content ###
         padding_len = self.seq_len - x_enc.shape[1]
+        # add to prevent <0，可能存在问题
+        if padding_len < 0: 
+            padding_len = abs(padding_len)
+
         padding = torch.zeros(size=[x_enc.shape[0], padding_len, x_enc.shape[2]]).to(observed_data.device)
         x_enc = torch.cat([x_enc, padding], dim=1)
         padding_t = torch.zeros(size=[x_enc.shape[0], padding_len]).to(observed_data.device)
+        
+
         observed_tp = torch.cat([observed_tp, padding_t], dim=1)
 
+        # x_enc shape: (32 98 12)  observed_tp shape: 32 98 其实就是batch size, seq_len, end_in (B T V)
+        # print(f"x_enc shape: {x_enc.shape}, observed_tp shape: {observed_tp.shape}")
 
         # do patching and embedding
         x_enc = x_enc.permute(0, 2, 1)
@@ -110,6 +135,11 @@ class Model(nn.Module):
         # z: [bs x nvars x d_model x patch_num]
         enc_out = enc_out.permute(0, 1, 3, 2)
 
+        # print(f"enc_out.shape: {enc_out.shape()}")
+        # 进行mean 操作
+        enc_out = torch.mean(enc_out, dim=-1) # 转化为(bs * nvars * d_model)
+        ## 要改成[B, nvars, d_model]
+        # 保证Shape: [B， V， d_model维]
         # 改Decoder
         L_pred = tp_to_predict.shape[-1]
         enc_out = enc_out.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
@@ -123,9 +153,3 @@ class Model(nn.Module):
         outputs = self.decoder(enc_out).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
 
         return outputs
-
-    
-    # def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
-    #    if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-    #        dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
-    #        return dec_out[:, -self.pred_len:, :]  # [B, L, D]

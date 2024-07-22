@@ -1,0 +1,15 @@
+nohup: ignoring input
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 21:03:02
+run_baselines.py --patience 10 --gpu 2 --dataset physionet --history 24 --model PatchTST
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=24, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='PatchTST', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=8, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='2', seq_len=128, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=874650, pred_window=24, ndim=41, patch_layer=1, patch_size_list=[64, 32, 16], num_experts_list=[3, 3, 3], task_name='long_term_forecast', label_len=48, pred_len=96, patch_len=16, d_model=64, dropout=0.1, output_attention=None, n_heads=1, d_ff=64, activation='gelu', e_layers=2, factor=3, enc_in=321)
+- Epoch 000, ExpID 84383
+Train - Loss (one batch): 0.01564
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.02477, 0.02477, 0.15737, 0.09623, 480.50%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 0, 0.02422, 0.02422, 0.15561, 0.09622, 513.42%
+Time spent: 48.08s
+- Epoch 001, ExpID 84383
+Train - Loss (one batch): 0.01740
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.02334, 0.02334, 0.15278, 0.10259, 762.14%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 1, 0.02265, 0.02265, 0.15050, 0.10259, 817.32%
+Time spent: 46.89s

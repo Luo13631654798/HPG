@@ -36,7 +36,7 @@ class Model(nn.Module):
             ], # 根据配置文件创建多个 EncoderLayer 层
             norm_layer=torch.nn.LayerNorm(configs.d_model) # 使用 LayerNorm 进行归一化
         )
-
+        
         self.te_scale = nn.Linear(1, 1) # 线性层，用于时间嵌入的缩放
         self.te_periodic = nn.Linear(1, configs.d_model - 1) # 线性层，用于时间嵌入的周期性部分
 
@@ -66,11 +66,15 @@ class Model(nn.Module):
         # 去Time Series Library找原始输入格式 跟这里的参数对应
         # Normalization from Non-stationary Transformer
         #  [B T V]
+        '''
         means = observed_data.mean(1, keepdim=True).detach()
         x_enc = observed_data - means
         stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
         x_enc /= stdev
+        '''
+        
 
+        x_enc = observed_data
         _, _, N = x_enc.shape
         ### add the content ###
         padding_len = self.seq_len - x_enc.shape[1]
@@ -80,14 +84,14 @@ class Model(nn.Module):
         observed_tp = torch.cat([observed_tp, padding_t], dim=1)
 
         # x_enc shape: (32 98 12)  observed_tp shape: 32 98 其实就是batch size, seq_len, end_in (B T V)
-        print(f"x_enc shape: {x_enc.shape}, observed_tp shape: {observed_tp.shape}")
+        # print(f"x_enc shape: {x_enc.shape}, observed_tp shape: {observed_tp.shape}")
 
         # Embedding
         enc_out = self.enc_embedding(x_enc, observed_tp.unsqueeze(-1))
         # enc_out shape: [32 13 512]
-        print(f"enc_out shape: {enc_out.shape}")
+        # print(f"enc_out shape: {enc_out.shape}")
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
-        enc_out = enc_out[:, :-1] # 保证Shape: [B， V， d_model维]
+        enc_out = enc_out[:, :-1] # 保证Shape: 3
 
         # 改Decoder
         L_pred = tp_to_predict.shape[-1]

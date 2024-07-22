@@ -1,0 +1,4 @@
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_models.py
+2024-07-22 17:19:04
+run_models.py --dataset mimic --state def --history 24 --patience 10 --batch_size 64 --lr 1e-3 --patch_size 1 --stride 1 --nhead 4 --tf_layer 1 --nlayer 1 --hid_dim 8 --outlayer Linear --seed 1 --gpu 1 --alpha 1
+Namespace(state='def', n=100000000, epoch=1000, patience=10, history=24, logmode='a', lr=0.001, w_decay=0.0, batch_size=64, viz=False, save='experiments/', load=None, seed=1, dataset='mimic', quantization=0.0, model='tPatchGNN', outlayer='Linear', hop=1, nhead=4, tf_layer=1, nlayer=1, patch_size=1.0, stride=1.0, hid_dim=8, te_dim=10, node_dim=10, alpha=1.0, res=1, gpu='1', npatch=24, device=device(type='cuda', index=0), PID=544786, pred_window=24, ndim=96, patch_layer=6, scale_patch_size=0.020833333333333332)

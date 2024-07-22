@@ -564,3 +564,71 @@ Train - Loss (one batch): 0.01946
 Val - Loss, MSE, RMSE, MAE, MAPE: 0.01729, 0.01729, 0.13150, 0.10396, 27.41%
 Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 0, 0.01666, 0.01666, 0.12907, 0.10301, 24.40%
 Time spent: 2.85s
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-18 23:02:30
+./tPatchGNN/run_baselines.py --dataset activity
+Namespace(state='def', n=100000000, epoch=1000, patience=10, history=3000, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='activity', quantization=0.0, model='iTransformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=98, top_k=5, num_kernels=64, npatch=125, device=device(type='cuda', index=0), PID=1353946, pred_window=1000, ndim=12, patch_layer=8, task_name='long_term_forecast', pred_len=720, output_attention=None, d_model=512, embed='timeF', freq='h', dropout=0.1, factor=3, d_ff=512, e_layers=4, n_heads=1, activation='gelu')
+- Epoch 000, ExpID 44837
+Train - Loss (one batch): 0.01771
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01680, 0.01680, 0.12962, 0.10272, 26.59%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 0, 0.01649, 0.01649, 0.12840, 0.10260, 23.90%
+Time spent: 4.17s
+- Epoch 001, ExpID 44837
+Train - Loss (one batch): 0.01507
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01669, 0.01669, 0.12919, 0.10254, 26.15%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 1, 0.01652, 0.01652, 0.12853, 0.10274, 23.60%
+Time spent: 3.43s
+- Epoch 002, ExpID 44837
+Train - Loss (one batch): 0.01404
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01662, 0.01662, 0.12891, 0.10244, 25.62%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 2, 0.01675, 0.01675, 0.12941, 0.10360, 23.35%
+Time spent: 3.78s
+- Epoch 003, ExpID 44837
+Train - Loss (one batch): 0.01692
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01662, 0.01662, 0.12891, 0.10234, 26.89%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 2, 0.01675, 0.01675, 0.12941, 0.10360, 23.35%
+Time spent: 3.03s
+- Epoch 004, ExpID 44837
+Train - Loss (one batch): 0.01908
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01836, 0.01836, 0.13549, 0.10795, 24.90%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 2, 0.01675, 0.01675, 0.12941, 0.10360, 23.35%
+Time spent: 3.14s
+- Epoch 005, ExpID 44837
+Train - Loss (one batch): 0.01350
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01626, 0.01626, 0.12750, 0.10114, 25.69%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 5, 0.01620, 0.01620, 0.12730, 0.10169, 23.25%
+Time spent: 3.65s
+- Epoch 006, ExpID 44837
+Train - Loss (one batch): 0.01690
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01625, 0.01625, 0.12748, 0.10114, 26.09%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 6, 0.01609, 0.01609, 0.12686, 0.10128, 23.61%
+Time spent: 3.61s
+- Epoch 007, ExpID 44837
+Train - Loss (one batch): 0.01603
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01676, 0.01676, 0.12945, 0.10267, 27.11%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 6, 0.01609, 0.01609, 0.12686, 0.10128, 23.61%
+Time spent: 3.23s
+- Epoch 008, ExpID 44837
+Train - Loss (one batch): 0.01570
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01647, 0.01647, 0.12832, 0.10173, 26.49%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 6, 0.01609, 0.01609, 0.12686, 0.10128, 23.61%
+Time spent: 3.27s
+- Epoch 009, ExpID 44837
+Train - Loss (one batch): 0.01426
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01883, 0.01883, 0.13722, 0.10856, 29.87%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 6, 0.01609, 0.01609, 0.12686, 0.10128, 23.61%
+Time spent: 3.01s
+- Epoch 010, ExpID 44837
+Train - Loss (one batch): 0.01322
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01681, 0.01681, 0.12964, 0.10274, 26.92%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 6, 0.01609, 0.01609, 0.12686, 0.10128, 23.61%
+Time spent: 3.14s
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-19 10:06:11
+./tPatchGNN/run_baselines.py
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=3000, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='activity', quantization=0.0, model='iTransformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=98, top_k=5, num_kernels=64, npatch=125, device=device(type='cuda', index=0), PID=1758801, pred_window=1000, ndim=12, patch_layer=8, task_name='long_term_forecast', pred_len=720, output_attention=None, d_model=512, embed='timeF', freq='h', dropout=0.1, factor=3, d_ff=512, e_layers=4, n_heads=1, activation='gelu')
+- Epoch 000, ExpID 72632
+Train - Loss (one batch): 0.01771
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01680, 0.01680, 0.12962, 0.10272, 26.59%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 0, 0.01649, 0.01649, 0.12840, 0.10260, 23.90%
+Time spent: 4.09s

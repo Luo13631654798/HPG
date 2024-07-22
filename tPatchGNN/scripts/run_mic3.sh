@@ -2,25 +2,25 @@
 patience=10
 gpu=1
 
-#for seed in {1..5}
-#do
-#    python run_models.py \
-#    --dataset mimic --state def --history 24 \
-#    --patience 10 --batch_size 16 --lr 1e-3 \
-#    --patch_size 1.5 --stride 1.5 --nhead 1 --tf_layer 1 --nlayer 1 \
-#    --hid_dim 8 \
-#    --outlayer Linear --seed $seed --gpu $gpu --alpha 1
-#done
-
-for seed in {1..5}
+for seed in $(seq 1 5)
 do
-    python run_models.py \
-    --dataset mimic --state def --history 24 \
-    --patience 10 --batch_size 16 --lr 1e-3 \
-    --patch_size 3 --stride 3 --nhead 1 --tf_layer 1 --nlayer 2 \
-    --hid_dim 8 \
-    --outlayer Linear --seed $seed --gpu $gpu --alpha 1
+   python run_models.py \
+   --dataset mimic --state def --history 24 \
+   --patience 10 --batch_size 64 --lr 1e-3 \
+   --patch_size 1 --stride 1 --nhead 4 --tf_layer 1 --nlayer 1 \
+   --hid_dim 8 \
+   --outlayer Linear --seed $seed --gpu $gpu --alpha 1
 done
+
+# for seed in {1..5}
+# do
+#     python run_models.py \
+#     --dataset mimic --state def --history 24 \
+#     --patience 10 --batch_size 16 --lr 1e-3 \
+#     --patch_size 3 --stride 3 --nhead 1 --tf_layer 1 --nlayer 2 \
+#     --hid_dim 8 \
+#     --outlayer Linear --seed $seed --gpu $gpu --alpha 1
+# done
 
 
 

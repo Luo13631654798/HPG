@@ -1,0 +1,224 @@
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-19 00:19:39
+./tPatchGNN/run_baselines.py --model PatchTST
+Namespace(state='def', n=100000000, epoch=1000, patience=10, history=1000, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='PatchTST', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=8, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=96, top_k=5, num_kernels=64, npatch=42, device=device(type='cuda', index=0), PID=1412209, pred_window=-952, ndim=41, patch_layer=7, task_name='long_term_forecast', label_len=48, pred_len=96, patch_len=16, d_model=64, dropout=0.1, output_attention=None, n_heads=1, d_ff=64, activation='gelu', e_layers=2, factor=3, enc_in=321)
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-19 00:23:20
+./tPatchGNN/run_baselines.py --model PatchTST
+Namespace(state='def', n=100000000, epoch=1000, patience=10, history=1000, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='PatchTST', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=8, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=96, top_k=5, num_kernels=64, npatch=42, device=device(type='cuda', index=0), PID=1414694, pred_window=-952, ndim=41, patch_layer=7, task_name='long_term_forecast', label_len=48, pred_len=96, patch_len=16, d_model=64, dropout=0.1, output_attention=None, n_heads=1, d_ff=64, activation='gelu', e_layers=2, factor=3, enc_in=321)
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-19 00:26:29
+./tPatchGNN/run_baselines.py --model PatchTST
+Namespace(state='def', n=100000000, epoch=1000, patience=10, history=1000, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='PatchTST', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=8, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=96, top_k=5, num_kernels=64, npatch=42, device=device(type='cuda', index=0), PID=1416788, pred_window=-952, ndim=41, patch_layer=7, task_name='long_term_forecast', label_len=48, pred_len=96, patch_len=16, d_model=64, dropout=0.1, output_attention=None, n_heads=1, d_ff=64, activation='gelu', e_layers=2, factor=3, enc_in=321)
+- Epoch 000, ExpID 47648
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.92s
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-19 00:28:16
+./tPatchGNN/run_baselines.py --model PatchTST
+Namespace(state='def', n=100000000, epoch=1000, patience=10, history=1000, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='PatchTST', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=8, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=96, top_k=5, num_kernels=64, npatch=42, device=device(type='cuda', index=0), PID=1418066, pred_window=-952, ndim=41, patch_layer=7, task_name='long_term_forecast', label_len=48, pred_len=96, patch_len=16, d_model=64, dropout=0.1, output_attention=None, n_heads=1, d_ff=64, activation='gelu', e_layers=2, factor=3, enc_in=321)
+- Epoch 000, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.28s
+- Epoch 001, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.85s
+- Epoch 002, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.86s
+- Epoch 003, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.86s
+- Epoch 004, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.85s
+- Epoch 005, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.85s
+- Epoch 006, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.83s
+- Epoch 007, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.83s
+- Epoch 008, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.85s
+- Epoch 009, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.85s
+- Epoch 010, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.60s
+- Epoch 011, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.81s
+- Epoch 012, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.82s
+- Epoch 013, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.81s
+- Epoch 014, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.79s
+- Epoch 015, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.82s
+- Epoch 016, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.86s
+- Epoch 017, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 4.38s
+- Epoch 018, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 3.80s
+- Epoch 019, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 3.81s
+- Epoch 020, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 3.80s
+- Epoch 021, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 3.80s
+- Epoch 022, ExpID 1791
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 3.81s
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-19 00:31:04
+./tPatchGNN/run_baselines.py --model PatchTST
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=1000, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='PatchTST', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=8, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=96, top_k=5, num_kernels=64, npatch=42, device=device(type='cuda', index=0), PID=1420492, pred_window=-952, ndim=41, patch_layer=7, task_name='long_term_forecast', label_len=48, pred_len=96, patch_len=16, d_model=64, dropout=0.1, output_attention=None, n_heads=1, d_ff=64, activation='gelu', e_layers=2, factor=3, enc_in=321)
+- Epoch 000, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.87s
+- Epoch 001, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.38s
+- Epoch 002, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.37s
+- Epoch 003, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.39s
+- Epoch 004, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.39s
+- Epoch 005, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.03s
+- Epoch 006, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.39s
+- Epoch 007, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.59s
+- Epoch 008, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.59s
+- Epoch 009, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.59s
+- Epoch 010, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.60s
+- Epoch 011, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.62s
+- Epoch 012, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.63s
+- Epoch 013, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.64s
+- Epoch 014, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 6.15s
+- Epoch 015, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 7.11s
+- Epoch 016, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 7.18s
+- Epoch 017, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 7.19s
+- Epoch 018, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 7.22s
+- Epoch 019, ExpID 43523
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.69s
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-19 00:58:38
+./tPatchGNN/run_baselines.py --model PatchTST
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=1000, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='PatchTST', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=8, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=96, top_k=5, num_kernels=64, npatch=42, device=device(type='cuda', index=0), PID=1441840, pred_window=-952, ndim=41, patch_layer=7, task_name='long_term_forecast', label_len=48, pred_len=96, patch_len=16, d_model=64, dropout=0.1, output_attention=None, n_heads=1, d_ff=64, activation='gelu', e_layers=2, factor=3, enc_in=321)
+- Epoch 000, ExpID 94663
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 6.68s
+- Epoch 001, ExpID 94663
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 6.14s
+- Epoch 002, ExpID 94663
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.79s
+- Epoch 003, ExpID 94663
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.40s
+- Epoch 004, ExpID 94663
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.37s
+- Epoch 005, ExpID 94663
+Train - Loss (one batch): nan
+Val - Loss, MSE, RMSE, MAE, MAPE: nan, nan, nan, nan, nan%
+Time spent: 5.36s

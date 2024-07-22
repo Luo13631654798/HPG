@@ -21,24 +21,8 @@ class Model(nn.Module):
         self.decompsition = series_decomp(configs.moving_avg)
         self.individual = individual
         self.c_out = configs.enc_in
-        '''
-        if self.individual:
-            self.Linear_Seasonal = nn.ModuleList()
-            self.Linear_Trend = nn.ModuleList()
 
-            for i in range(self.c_out):
-                self.Linear_Seasonal.append(
-                    nn.Linear(self.seq_len, self.pred_len))
-                self.Linear_Trend.append(
-                    nn.Linear(self.seq_len, self.pred_len))
-
-                self.Linear_Seasonal[i].weight = nn.Parameter(
-                    (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
-                self.Linear_Trend[i].weight = nn.Parameter(
-                    (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
-        else:
         '''
-        
         self.Linear_Seasonal = nn.Linear(self.seq_len, self.pred_len)
         self.Linear_Trend = nn.Linear(self.seq_len, self.pred_len)
 
@@ -47,7 +31,29 @@ class Model(nn.Module):
         self.Linear_Trend.weight = nn.Parameter(
             (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
 
-    def encoder(self, x):
+        '''
+        self.te_scale = nn.Linear(1, 1) # 线性层，用于时间嵌入的缩放
+        self.te_periodic = nn.Linear(1, configs.d_model - 1) # 线性层，用于时间嵌入的周期性部分
+
+
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(configs.d_model * 2, configs.d_model), # 线性层
+            nn.ReLU(inplace=True), # relu激活函数
+            nn.Linear(configs.d_model, configs.d_model), # 线性层
+            nn.ReLU(inplace=True), # relu激活函数
+            nn.Linear(configs.d_model, 1) # 线性层，输出为1
+        )
+
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)，输入时间序列
+        out1 = self.te_scale(tt) # 时间嵌入的缩放
+        out2 = torch.sin(self.te_periodic(tt)) # 时间嵌入的周期性部分
+        return torch.cat([out1, out2], -1) # 将缩放和周期性部分拼接
+
+    def forecasting(self, x):
+        # Encoder
+        # return self.encoder(x_enc)
         seasonal_init, trend_init = self.decompsition(x)
         seasonal_init, trend_init = seasonal_init.permute(
             0, 2, 1), trend_init.permute(0, 2, 1)
@@ -55,14 +61,18 @@ class Model(nn.Module):
         seasonal_output = self.Linear_Seasonal(seasonal_init)
         trend_output = self.Linear_Trend(trend_init)
         x = seasonal_output + trend_output
-        return x.permute(0, 2, 1)
+        
+        # Prepare input for new decoder
+        L_pred = x.shape[-1]
+        x = x.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
+        time_steps_to_predict = torch.arange(L_pred).view(1, 1, L_pred, 1).repeat(x.shape[0], x.shape[1], 1, 1)
+        te_pred = self.LearnableTE(time_steps_to_predict)  # (B, N, Lp, F_te)
 
-    def forecast(self, x_enc):
-        # Encoder
-        return self.encoder(x_enc)
+        x = torch.cat([x, te_pred], dim=-1)  # (B, N, Lp, F)
 
-    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            dec_out = self.forecast(x_enc)
-            return dec_out[:, -self.pred_len:, :]  # [B, L, D]
-        return None
+        # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
+        outputs = self.decoder(x).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
+
+        return outputs
+        # return x.permute(0, 2, 1)
+

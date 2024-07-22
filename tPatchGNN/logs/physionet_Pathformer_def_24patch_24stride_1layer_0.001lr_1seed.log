@@ -1,0 +1,63 @@
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 13:31:08
+run_baselines.py --history 24 --model Pathformer --dataset physionet
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=24, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=128, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=183765, pred_window=24, ndim=41, patch_layer=1, patch_size_list=[64, 32, 16, 8, 4, 2], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1, num_experts_list=[4, 4, 4])
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 13:32:43
+run_baselines.py --history 36 --model Pathformer --dataset physionet
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=36, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=175, top_k=5, num_kernels=64, npatch=2, device=device(type='cuda', index=0), PID=184951, pred_window=12, ndim=41, patch_layer=2, patch_size_list=[35, 25, 7, 5], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1, num_experts_list=[4, 4, 4])
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 13:34:20
+run_baselines.py --history 12 --model Pathformer --dataset physionet
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=12, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=83, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=186449, pred_window=36, ndim=41, patch_layer=1, patch_size_list=[83, 1], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1, num_experts_list=[4, 4, 4])
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 13:57:39
+run_baselines.py --history 24 --model Pathformer --dataset physionet --gpu 3
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=24, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='3', seq_len=128, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=202845, pred_window=24, ndim=41, patch_layer=1, patch_size_list=[64, 32, 16, 8, 4, 2], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1, num_experts_list=[4, 4, 4])
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 13:59:12
+run_baselines.py --history 36 --model Pathformer --dataset physionet --gpu 3
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=36, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='3', seq_len=175, top_k=5, num_kernels=64, npatch=2, device=device(type='cuda', index=0), PID=203910, pred_window=12, ndim=41, patch_layer=2, patch_size_list=[35, 25, 7, 5], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1, num_experts_list=[4, 4, 4])
+- Epoch 000, ExpID 40749
+Train - Loss (one batch): 0.00831
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.00915, 0.00915, 0.09564, 0.05625, 217.93%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 0, 0.00976, 0.00976, 0.09877, 0.05553, 226.65%
+Time spent: 318.76s
+- Epoch 001, ExpID 40749
+Train - Loss (one batch): 0.00695
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.00899, 0.00899, 0.09480, 0.05671, 205.41%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 1, 0.00949, 0.00949, 0.09742, 0.05616, 211.75%
+Time spent: 330.71s
+- Epoch 002, ExpID 40749
+Train - Loss (one batch): 0.00894
+Val - Loss, MSE, RMSE, MAE, MAPE: 0.01001, 0.01001, 0.10006, 0.05956, 222.49%
+Test - Best epoch, Loss, MSE, RMSE, MAE, MAPE: 1, 0.00949, 0.00949, 0.09742, 0.05616, 211.75%
+Time spent: 295.73s
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 14:17:50
+run_baselines.py --history 12 --model Pathformer --dataset physionet --gpu 3
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=12, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='3', seq_len=83, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=215058, pred_window=36, ndim=41, patch_layer=1, patch_size_list=[83, 1], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1, num_experts_list=[10, 10, 10])
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 16:32:17
+run_baselines.py
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=24, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=128, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=305176, pred_window=24, ndim=41, patch_layer=1, patch_size_list=[64, 32, 16], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1, num_experts_list=[4, 4, 4])
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 16:41:53
+run_baselines.py
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=24, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=128, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=311098, pred_window=24, ndim=41, patch_layer=1, patch_size_list=[64, 32, 16], num_experts_list=[4, 4, 4], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1)
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 16:44:27
+run_baselines.py
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=24, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=128, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=312857, pred_window=24, ndim=41, patch_layer=1, patch_size_list=[64, 32, 16], num_experts_list=[3, 3, 3], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1)
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 16:53:10
+run_baselines.py
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=24, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=128, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=328089, pred_window=24, ndim=41, patch_layer=1, patch_size_list=[64, 32, 16], num_experts_list=[3, 3, 3], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1)
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 16:54:05
+run_baselines.py --history 36
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=36, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=175, top_k=5, num_kernels=64, npatch=2, device=device(type='cuda', index=0), PID=328793, pred_window=12, ndim=41, patch_layer=2, patch_size_list=[35, 25, 7], num_experts_list=[3, 3, 3], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1)
+/home/jiaxihu/bowenzhang/HPG/tPatchGNN/run_baselines.py
+2024-07-22 17:06:19
+run_baselines.py
+Namespace(state='def', n=100000000, epoch=100, patience=10, history=24, logmode='a', lr=0.001, w_decay=0.0, batch_size=32, viz=False, save='experiments/', load=None, seed=1, dataset='physionet', quantization=0.0, model='Pathformer', outlayer='Linear', patch_ts=False, hop=1, nhead=1, tf_layer=1, nlayer=1, patch_size=24, stride=24, hid_dim=64, te_dim=10, node_dim=10, alpha=0.9, res=1, gpu='0', seq_len=128, top_k=5, num_kernels=64, npatch=1, device=device(type='cuda', index=0), PID=434795, pred_window=24, ndim=41, patch_layer=1, patch_size_list=[64, 32, 16], num_experts_list=[3, 3, 3], task_name='long_term_forecast', layer_nums=3, pred_len=98, num_nodes=41, pre_len=98, k=2, d_model=16, d_ff=64, residual_connection=1, revin=1)

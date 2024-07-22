@@ -40,6 +40,7 @@ class TimesBlock(nn.Module):
         res = []
         for i in range(self.k):
             period = period_list[i]
+            print(f"Period: {period}")
             # padding
             if (self.seq_len + self.pred_len) % period != 0:
                 length = (
@@ -49,13 +50,27 @@ class TimesBlock(nn.Module):
             else:
                 length = (self.seq_len + self.pred_len)
                 out = x
+            print(f"Length: {length}, Period: {period}")
+
+            # 确保长度与 period 兼容
+            # if length % period != 0:
+                # raise ValueError(f"Length {length} is not compatible with period {period}")
+            # 计算总大小以确保 reshape 操作的一致性
+            total_size_before = out.numel()
             # reshape
             out = out.reshape(B, length // period, period,
                               N).permute(0, 3, 1, 2).contiguous()
+            print(f"out shape after permute: {out.shape}")  # 添加调试信息
+
             # 2D conv: from 1d Variation to 2d Variation
             out = self.conv(out)
             # reshape back
             out = out.permute(0, 2, 3, 1).reshape(B, -1, N)
+            total_size_after = out.numel()
+            print(f"total_size_before: {total_size_before}, total_size_after: {total_size_after}")  # 添加调试信息
+            if total_size_before != total_size_after:
+                raise ValueError(f"Mismatch in size after reshape: before={total_size_before}, after={total_size_after}")
+
             res.append(out[:, :(self.seq_len + self.pred_len), :])
         res = torch.stack(res, dim=-1)
         # adaptive aggregation
@@ -86,8 +101,14 @@ class Model(nn.Module):
                                            configs.dropout)
         self.layer = configs.e_layers
         self.layer_norm = nn.LayerNorm(configs.d_model)
+        # add linear layer
+        # self.linear_layer = nn.Linear(41, self.configs.enc_in)
+
+        
         self.predict_linear = nn.Linear(
                 self.seq_len, self.pred_len + self.seq_len)
+        
+        
         self.te_scale = nn.Linear(1, 1)
         self.te_periodic = nn.Linear(1, configs.d_model - 1)
 
@@ -138,19 +159,22 @@ class Model(nn.Module):
         # 确认传递给模型的输入形状
         # 32是batch 98是seq_len  12是ndim
         # x_enc 32 98 12   observed_tp 32 98
-        print(f"x_enc shape: {x_enc.shape}, observed_tp shape: {observed_tp.shape}") # [32 98 12]  [32 98]
+        # print(f"x_enc shape: {x_enc.shape}, observed_tp shape: {observed_tp.shape}") # [32 98 12]  [32 98]
+
+        # x_enc = self.linear_layer(x_enc)
 
         # embedding 主要问题
         enc_out = self.enc_embedding(x_enc, observed_tp.unsqueeze(-1))  # [B,T,C]
         print(f"enc_out shape: {enc_out.shape}")
-        enc_out = self.predict_linear(enc_out.permute(0, 2, 1)).permute(
-            0, 2, 1)  # align temporal dimension
+        # enc_out = self.predict_linear(enc_out.permute(0, 2, 1)).permute(
+            # 0, 2, 1)  # align temporal dimension
         # TimesNet
         for i in range(self.layer):
             enc_out = self.layer_norm(self.model[i](enc_out))
 
         enc_out = enc_out[:, :-1]
         # batchsize 变量数 d_model
+
         # 改Decoder
         L_pred = tp_to_predict.shape[-1]
         enc_out = enc_out.unsqueeze(dim=-2).repeat(1, 1, L_pred, 1)  # (B, N, Lp, F)
@@ -162,12 +186,5 @@ class Model(nn.Module):
 
         # (B, N, Lp, F) -> (B, N, Lp, 1) -> (1, B, Lp, N)
         outputs = self.decoder(enc_out).squeeze(dim=-1).permute(0, 2, 1).unsqueeze(dim=0)
-        # De-Normalization from Non-stationary Transformer
-        outputs = outputs * \
-                  (stdev[:, 0, :].unsqueeze(1).repeat(
-                      1, self.pred_len + self.seq_len, 1))
-        outputs = outputs + \
-                  (means[:, 0, :].unsqueeze(1).repeat(
-                      1, self.pred_len + self.seq_len, 1))
+
         return outputs
-        #return outputs

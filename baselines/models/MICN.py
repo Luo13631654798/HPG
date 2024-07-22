@@ -140,22 +140,34 @@ class Model(nn.Module):
                                              d_layers=configs.d_layers, decomp_kernel=decomp_kernel,
                                              c_out=configs.c_out, conv_kernel=conv_kernel,
                                              isometric_kernel=isometric_kernel, device=torch.device('cuda:0'))
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
+        
+        if self.task_name == 'long_term_forecast':
             # refer to DLinear
             self.regression = nn.Linear(configs.seq_len, configs.pred_len)
             self.regression.weight = nn.Parameter(
                 (1 / configs.pred_len) * torch.ones([configs.pred_len, configs.seq_len]),
                 requires_grad=True)
-        if self.task_name == 'imputation':
-            self.projection = nn.Linear(configs.d_model, configs.c_out, bias=True)
-        if self.task_name == 'anomaly_detection':
-            self.projection = nn.Linear(configs.d_model, configs.c_out, bias=True)
-        if self.task_name == 'classification':
-            self.act = F.gelu
-            self.dropout = nn.Dropout(configs.dropout)
-            self.projection = nn.Linear(configs.c_out * configs.seq_len, configs.num_class)
+            
+    def LearnableTE(self, tt):
+        # tt: (N*M*B, L, 1)，输入时间序列
+        out1 = self.te_scale(tt) # 时间嵌入的缩放
+        out2 = torch.sin(self.te_periodic(tt)) # 时间嵌入的周期性部分
+        return torch.cat([out1, out2], -1) # 将缩放和周期性部分拼接
+        
+    def forecasting(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+        # self, x_enc, x_mark_enc, x_dec, x_mark_dec
+        # self, tp_to_predict, observed_data, observed_tp, observed_mask
+        # tp_to_predict: 要预测的时刻 [B, L_Pred]
+        # observed_data: 观测值 [B, T, V]
+        # observed_mask: 掩码 [B, T, V] 一般不用
+        # observed_tp: 观测时刻 [B, T, 1]
 
-    def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+        # forcast改名为forcasting
+        # 参数名统一
+        # 去Time Series Library找原始输入格式 跟这里的参数对应
+        # Normalization from Non-stationary Transformer
+        #  [B T V]
+
         # Multi-scale Hybrid Decomposition
         seasonal_init_enc, trend = self.decomp_multi(x_enc)
         trend = self.regression(trend.permute(0, 2, 1)).permute(0, 2, 1)
@@ -168,18 +180,13 @@ class Model(nn.Module):
         dec_out = dec_out[:, -self.pred_len:, :] + trend[:, -self.pred_len:, :]
         return dec_out
 
+'''
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
-        if self.task_name == 'imputation':
-            dec_out = self.imputation(
-                x_enc, x_mark_enc, x_dec, x_mark_dec, mask)
-            return dec_out  # [B, L, D]
-        if self.task_name == 'anomaly_detection':
-            dec_out = self.anomaly_detection(x_enc)
-            return dec_out  # [B, L, D]
-        if self.task_name == 'classification':
-            dec_out = self.classification(x_enc, x_mark_enc)
-            return dec_out  # [B, N]
+        
         return None
+
+'''
+    

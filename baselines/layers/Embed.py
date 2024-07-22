@@ -103,7 +103,7 @@ class TimeFeatureEmbedding(nn.Module):
         self.embed = nn.Linear(d_inp, d_model, bias=False) # (d_inp, d_model)
 
     def forward(self, x):
-        print(f"x.embed_shape: {x.shape}") # [32 98 1]
+        # print(f"x.embed_shape: {x.shape}") # [32 98 1]
         return self.embed(x)
 
 
@@ -117,7 +117,7 @@ class DataEmbedding(nn.Module):
                                                     freq=freq) if embed_type != 'timeF' else TimeFeatureEmbedding(
             d_model=d_model, embed_type=embed_type, freq=freq)
         self.dropout = nn.Dropout(p=dropout)
-
+        
     def forward(self, x, x_mark):
         if x_mark is None:
             x = self.value_embedding(x) + self.position_embedding(x)
