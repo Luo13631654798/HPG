@@ -51,3 +51,15 @@ python run_models.py \
 - `seed`: the seed for parameter initialization.
 - `history`: the length of the time for observation, the rest will be used for forecasting. Please note that different datasets have varying time spans and levels of granularity.
 
+## Baselines Experiment
+
+For the Multi-scale baselines, including *Pathformer, TimeMixer, MSGNet, MICN*. For the regular time series baselines, including *iTransformer, TimesNet, DLinear, PatchTST*. To replicate these results, please execute the below command.
+
+Regular time series baselines example:
+
+```shell
+sh ./tPatchGNN/scripts/run_baselines_iTransformer.sh
+sh ./tPatchGNN/scripts/run_baselines_MSGNet.sh
+sh ./tPatchGNN/scripts/run_baselines_PatchTST.sh
+```
+
